@@ -16,6 +16,7 @@ const PROTOCOL_VERSION = 1;
 const SERVER_NAME = "Synthetic Staging Server";
 const initialMaxPlayers = 20;
 const updatedMaxPlayers = 24;
+const CO_MANAGEMENT_LOCALE_STORAGE_KEY = "msh-co-management-locale:v1";
 const runtimeSecrets = [];
 
 function sha256(value) {
@@ -259,9 +260,33 @@ async function waitForInputValue(locator, expected, timeoutMs = 15_000) {
   throw new Error(`input-value-not-updated-${expected}`);
 }
 
-async function joinAndApprove(page, baseUrl, secret, displayName, serverHeading) {
+async function verifyLocaleSwitch(page) {
+  const picker = page.locator('[data-testid="co-management-language-picker"]');
+  await picker.waitFor({ state: "visible", timeout: 5_000 });
+  assert.equal(await picker.locator("option").count(), 10);
+  const headings = {
+    en: "Join a friend's server",
+    ja: "友達のサーバーに参加",
+    "zh-CN": "加入朋友的服务器",
+    "zh-TW": "加入朋友的伺服器",
+    ko: "친구의 서버 참가",
+    es: "Unirse al servidor de un amigo",
+    de: "Dem Server eines Freundes beitreten",
+    fr: "Rejoindre le serveur d’un ami",
+    "pt-BR": "Entrar no servidor de um amigo",
+  };
+  for (const [locale, heading] of Object.entries(headings)) {
+    await picker.selectOption(locale);
+    await page.getByRole("heading", { name: heading }).waitFor({ state: "visible", timeout: 5_000 });
+  }
+  await picker.selectOption("ja");
+  await page.getByRole("heading", { name: headings.ja }).waitFor({ state: "visible", timeout: 5_000 });
+}
+
+async function joinAndApprove(page, baseUrl, secret, displayName, serverHeading, { verifyLocales = false } = {}) {
   await page.goto(`${baseUrl}/#invite=${encodeURIComponent(secret)}`, { waitUntil: "domcontentloaded" });
   await page.getByRole("heading", { name: "友達のサーバーに参加" }).waitFor({ state: "visible", timeout: 15_000 });
+  if (verifyLocales) await verifyLocaleSwitch(page);
   await page.getByLabel("表示名").fill(displayName);
   assert.equal(await page.getByLabel("招待秘密").inputValue(), secret);
   await page.getByRole("button", { name: "共同管理に参加" }).click();
@@ -350,6 +375,9 @@ async function main() {
     const viewerPage = await viewerContext.newPage();
     const editorPage = await editorContext.newPage();
     for (const page of [viewerPage, editorPage]) {
+      await page.addInitScript((storageKey) => window.localStorage.setItem(storageKey, "ja"), CO_MANAGEMENT_LOCALE_STORAGE_KEY);
+    }
+    for (const page of [viewerPage, editorPage]) {
       page.on("pageerror", (error) => pageErrors.push(String(error)));
       page.on("console", (message) => {
         const location = message.location().url;
@@ -368,7 +396,7 @@ async function main() {
     }
 
     await Promise.all([
-      joinAndApprove(viewerPage, baseUrl, viewerSecret, "Viewer QA", SERVER_NAME),
+      joinAndApprove(viewerPage, baseUrl, viewerSecret, "Viewer QA", SERVER_NAME, { verifyLocales: true }),
       joinAndApprove(editorPage, baseUrl, editorSecret, "Editor QA", SERVER_NAME),
     ]);
 

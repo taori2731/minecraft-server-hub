@@ -64,9 +64,13 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 3px s
 .access-shell, .waiting-shell { min-height: 100vh; display: grid; place-items: center; padding: 30px 18px; background: var(--bg); }
 .access-shell::before, .waiting-shell::before { content: ""; position: fixed; inset: auto auto 0 0; width: 260px; height: 260px; opacity: .28; background: repeating-linear-gradient(0deg, transparent 0 22px, rgba(141,156,255,.08) 23px 24px), repeating-linear-gradient(90deg, transparent 0 22px, rgba(141,156,255,.08) 23px 24px); clip-path: polygon(0 40%, 16% 40%, 16% 25%, 33% 25%, 33% 12%, 50% 12%, 50% 26%, 68% 26%, 68% 8%, 84% 8%, 84% 0, 100% 0, 100% 100%, 0 100%); pointer-events: none; }
 .access-card, .waiting-card { position: relative; width: min(520px, 100%); padding: 36px; background: var(--surface); border: 1px solid var(--border); border-radius: 16px; box-shadow: var(--shadow); }
+.access-card-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; }
 .access-brand, .portal-brand { display: flex; align-items: center; gap: 13px; }
 .access-brand strong, .portal-brand strong { display: block; font-size: 19px; letter-spacing: -.02em; }
 .access-brand small, .portal-brand small { display: block; color: var(--muted); font-size: 12px; margin-top: 3px; }
+.language-control { display: grid; flex: 0 0 auto; gap: 5px; min-width: 0; }
+.language-control > span { color: var(--muted); font-size: 10px; font-weight: 700; }
+.language-control select { min-height: 34px; max-width: 170px; color: var(--text); background: var(--bg-deep); border: 1px solid var(--border); border-radius: 7px; padding: 0 8px; font-size: 11px; }
 .pixel-mark { width: 38px; height: 38px; position: relative; flex: 0 0 auto; transform: rotate(30deg); }
 .pixel-mark.small { width: 33px; height: 33px; }
 .pixel-mark span { position: absolute; width: 22px; height: 22px; border: 6px solid var(--green); border-radius: 3px; }
@@ -93,6 +97,7 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 3px s
 .waiting-shell { background: #10151e; }
 .waiting-card { text-align: center; width: min(610px, 100%); }
 .waiting-card.compact { width: min(470px, 100%); }
+.waiting-card-tools { display: flex; justify-content: flex-end; margin: -11px -8px 12px; text-align: left; }
 .waiting-icon { width: 72px; height: 72px; display: grid; place-items: center; margin: 0 auto 22px; color: var(--blue); background: var(--blue-soft); border: 1px solid rgba(141,156,255,.35); border-radius: 50%; }
 .waiting-icon.warning { color: var(--amber); background: rgba(241,186,98,.12); border-color: rgba(241,186,98,.34); }
 .waiting-card .eyebrow { display: block; }
@@ -109,6 +114,8 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 3px s
 .portal-header { min-height: 72px; display: flex; align-items: center; gap: 18px; padding: 0 34px; background: var(--bg-deep); border-bottom: 1px solid var(--border-soft); }
 .portal-brand { min-width: 0; }
 .header-right { margin-left: auto; display: flex; align-items: center; gap: 15px; }
+.portal-header .language-control > span { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+.portal-header .language-control select { max-width: 142px; }
 .connection-state { display: inline-flex; align-items: center; gap: 8px; color: var(--green); font-size: 13px; font-weight: 750; }
 .connection-state.offline { color: var(--red, #e58b8b); }
 .user-name { max-width: 160px; color: var(--muted); font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -211,6 +218,8 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 3px s
   .portal-brand small { font-size: 10px; }
   .connection-state { font-size: 0; }
   .connection-state .status-dot { width: 9px; height: 9px; }
+  .portal-header .language-control select { max-width: 112px; padding-inline: 5px; font-size: 10px; }
+  .header-right { gap: 8px; }
   .user-name { display: none; }
   .portal-body { display: block; min-height: calc(100vh - 64px); }
   .portal-nav { position: sticky; top: 0; z-index: 2; display: block; padding: 7px 10px; border-right: 0; border-bottom: 1px solid var(--border-soft); }
@@ -238,6 +247,8 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 3px s
 
 @media (max-width: 430px) {
   .access-card, .waiting-card { padding: 25px 20px; }
+  .access-card-top { align-items: center; }
+  .access-card .language-control select { max-width: 125px; }
   .access-copy { margin-top: 35px; }
   .join-code { gap: 4px; }
   .join-code span { width: 40px; height: 52px; font-size: 23px; }
