@@ -5189,6 +5189,7 @@ fn start_server_automation_monitor(app: tauri::AppHandle) {
 }
 
 pub fn run() {
+    co_management::ensure_rustls_crypto_provider();
     let stop_operations = Arc::new(AtomicUsize::new(0));
     let post_stop_exit_guard = Arc::new(Mutex::new(None));
     let allow_app_exit = Arc::new(AtomicBool::new(false));

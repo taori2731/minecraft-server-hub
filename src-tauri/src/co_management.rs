@@ -9,7 +9,7 @@ use std::{
     collections::{HashMap, VecDeque},
     net::IpAddr,
     path::{Path, PathBuf},
-    sync::{Arc, Mutex},
+    sync::{Arc, Mutex, OnceLock},
     time::Duration,
 };
 
@@ -43,6 +43,20 @@ const MIN_INVITE_SECRET_BYTES: usize = 32;
 const INVITE_LIFETIME_MINUTES: i64 = 10;
 const APPROVED_SESSION_LIFETIME_HOURS: i64 = 12;
 const MAX_BRIDGE_MESSAGE_BYTES: usize = 256 * 1024;
+
+static RUSTLS_CRYPTO_PROVIDER: OnceLock<()> = OnceLock::new();
+
+/// Select the process-wide Rustls provider before any HTTPS/WSS connection.
+///
+/// reqwest and tokio-tungstenite intentionally expose different Rustls
+/// feature combinations. When both providers are linked, Rustls cannot
+/// choose one automatically and panics on the first TLS connection. The
+/// desktop app uses the AWS-LC provider consistently for both clients.
+pub fn ensure_rustls_crypto_provider() {
+    RUSTLS_CRYPTO_PROVIDER.get_or_init(|| {
+        let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
+    });
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -1647,6 +1661,7 @@ impl HostConnectionManager {
         host_id: &str,
         token: &str,
     ) -> AppResult<()> {
+        ensure_rustls_crypto_provider();
         validate_relay_endpoint(endpoint)?;
         validate_host_id(host_id)?;
         validate_secret(token)?;
@@ -2320,6 +2335,7 @@ pub async fn register_host(
     host_id: &str,
     token: &str,
 ) -> AppResult<()> {
+    ensure_rustls_crypto_provider();
     let base = validate_relay_endpoint(endpoint)?;
     validate_host_id(host_id)?;
     validate_secret(token)?;
