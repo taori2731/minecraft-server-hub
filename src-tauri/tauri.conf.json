@@ -1,0 +1,52 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Minecraft Server Hub",
+  "version": "0.3.8",
+  "identifier": "local.minecraft-server-hub.desktop",
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "devUrl": "http://127.0.0.1:1420",
+    "beforeBuildCommand": "npm run build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "Minecraft Server Hub",
+        "width": 1536,
+        "height": 960,
+        "minWidth": 960,
+        "minHeight": 680,
+        "center": true,
+        "resizable": true,
+        "fullscreen": false
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; connect-src 'self' ipc: http://ipc.localhost; img-src 'self' asset: http://asset.localhost data: https://cdn.modrinth.com https://media.forgecdn.net; style-src 'self' 'unsafe-inline'; font-src 'self'"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["nsis"],
+    "createUpdaterArtifacts": true,
+    "resources": ["../docs/THIRD_PARTY_NOTICES.md", "../docs/licenses/MPL-2.0.txt"],
+    "icon": ["icons/icon.png"],
+    "windows": {
+      "nsis": {
+        "installerIcon": "icons/icon.ico",
+        "languages": ["Japanese", "English"],
+        "displayLanguageSelector": false,
+        "installMode": "currentUser"
+      }
+    }
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDM1NzZGQTZEQTk0M0FBNjAKUldSZ3FrT3BiZnAyTmI2a05GUnMyZ3czSlFVUVFTYjNBQmFHbmdWclJpU2pqV2s1Rm0yNFVOVlgK",
+      "windows": {
+        "installMode": "passive"
+      }
+    }
+  }
+}

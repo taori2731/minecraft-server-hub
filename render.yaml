@@ -1,0 +1,31 @@
+services:
+  - type: web
+    name: cohostrelay-staging
+    runtime: node
+    plan: free
+    region: singapore
+    buildCommand: npm ci --include=dev && npm --prefix co-management/relay ci --include=dev && npm run build:co-management
+    startCommand: npm --prefix co-management/relay run start:production
+    healthCheckPath: /health/ready
+    maxShutdownDelaySeconds: 30
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: MSH_CO_MANAGEMENT_HOST
+        value: 0.0.0.0
+      - key: MSH_CO_MANAGEMENT_ALLOWED_ORIGINS
+        value: https://staging.cohostrelay.online
+      - key: MSH_CO_MANAGEMENT_DATABASE_SSL
+        value: require
+      - key: MSH_CO_MANAGEMENT_DATABASE_POOL_MAX
+        value: "5"
+      - key: MSH_CO_MANAGEMENT_TRUST_PROXY
+        value: "0"
+      - key: MSH_CO_MANAGEMENT_HSTS_MAX_AGE
+        value: "0"
+      - key: MSH_CO_MANAGEMENT_DATABASE_URL
+        sync: false
+      - key: MSH_CO_MANAGEMENT_MIGRATION_DATABASE_URL
+        sync: false
+      - key: MSH_CO_MANAGEMENT_RELAY_KEYS
+        sync: false

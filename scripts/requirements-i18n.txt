@@ -1,0 +1,4 @@
+# Development-only dependencies for generate_full_i18n_catalog.py.
+# Install these in a temporary virtual environment; they are not shipped with the app.
+argostranslate==1.11.0
+opencc-python-reimplemented==0.1.7

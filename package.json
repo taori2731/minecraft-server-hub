@@ -1,0 +1,53 @@
+{
+  "name": "minecraft-server-hub",
+  "private": true,
+  "version": "0.3.8",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --port 1420",
+    "dev:developer-tools": "vite --config developer-tools/vite.config.ts",
+    "dev:developer-tools:desktop": "cd developer-tools && npx --prefix .. tauri dev",
+    "build": "npm run check && vite build",
+    "build:developer-tools": "npm run check:developer-tools && vite build --config developer-tools/vite.config.ts",
+    "build:developer-tools:desktop": "cd developer-tools && npx --prefix .. tauri build",
+    "build:developer-tools:update": "cd developer-tools && npx --prefix .. tauri build --config src-tauri/tauri.updater.conf.json",
+    "build:web": "vite build",
+    "check": "tsc --noEmit",
+    "check:co-management": "npm --prefix co-management/relay run check && tsc --noEmit -p co-management/browser/tsconfig.json",
+    "dev:co-management": "vite --config co-management/browser/vite.config.ts",
+    "build:co-management": "npm run check:co-management && vite build --config co-management/browser/vite.config.ts",
+    "test:co-management": "npm --prefix co-management/relay test",
+    "check:developer-tools": "tsc --noEmit -p developer-tools/tsconfig.json",
+    "quality:verify": "node scripts/quality-evidence.mjs",
+    "verify:release": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/verify-release-artifact.ps1",
+    "test": "vitest run",
+    "test:developer-tools": "node --test scripts/developer-inspection.node.mjs && vitest run --config developer-tools/vite.config.ts",
+    "test:ui": "node scripts/ui-smoke.cjs",
+    "test:watch": "vitest",
+    "tauri": "tauri"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "2.11.1",
+    "@tauri-apps/plugin-dialog": "2.7.2",
+    "@tauri-apps/plugin-notification": "^2.3.3",
+    "@tauri-apps/plugin-opener": "2.5.4",
+    "@tauri-apps/plugin-updater": "^2.10.1",
+    "react": "19.2.8",
+    "react-dom": "19.2.8"
+  },
+  "devDependencies": {
+    "@babel/parser": "^7.29.0",
+    "@tauri-apps/cli": "2.11.4",
+    "@testing-library/jest-dom": "7.0.1",
+    "@testing-library/react": "16.3.2",
+    "@types/react": "19.2.14",
+    "@types/react-dom": "19.2.3",
+    "@vitejs/plugin-react": "6.1.0",
+    "@vitest/coverage-v8": "^4.1.11",
+    "jsdom": "30.0.1",
+    "playwright": "^1.62.1",
+    "typescript": "7.0.2",
+    "vite": "8.2.2",
+    "vitest": "4.1.11"
+  }
+}

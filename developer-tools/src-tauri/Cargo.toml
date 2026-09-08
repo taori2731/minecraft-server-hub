@@ -1,0 +1,29 @@
+[package]
+name = "minecraft-server-hub-developer-tools"
+version = "0.3.1"
+description = "Controlled release and supply-chain inspection tools for Minecraft Server Hub"
+authors = ["Minecraft Server Hub contributors"]
+edition = "2024"
+rust-version = "1.95"
+
+[build-dependencies]
+tauri-build = { version = "2.5.6", features = [] }
+
+[dependencies]
+base64 = "0.22.1"
+chrono = { version = "0.4.42", features = ["serde"] }
+hex = "0.4.3"
+regex = "1.12.3"
+reqwest = { version = "0.13.4", features = ["json"] }
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.149"
+sha2 = "0.10.9"
+tauri = { version = "2.11.5", features = [] }
+tauri-plugin-dialog = "2.7.2"
+tauri-plugin-updater = "2.10.0"
+
+[target.'cfg(windows)'.dependencies]
+minisign-verify = "0.2.5"
+
+[dev-dependencies]
+tempfile = "3.23.0"
