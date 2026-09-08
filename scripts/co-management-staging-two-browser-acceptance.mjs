@@ -321,6 +321,7 @@ async function main() {
   let viewerContext;
   let editorContext;
   let host;
+  let hostDisconnectedAt;
   const pageErrors = [];
   try {
     const readiness = await fetch(`${baseUrl}/health/ready`);
@@ -351,7 +352,18 @@ async function main() {
     for (const page of [viewerPage, editorPage]) {
       page.on("pageerror", (error) => pageErrors.push(String(error)));
       page.on("console", (message) => {
-        if (message.type() === "error") pageErrors.push(`${message.text()} @ ${message.location().url}`);
+        const location = message.location().url;
+        const expectedUnauthenticatedSession = message.type() === "error"
+          && location.endsWith("/api/v1/session")
+          && /status of 401/iu.test(message.text());
+        const expectedDisconnectTransition = message.type() === "error"
+          && hostDisconnectedAt !== undefined
+          && Date.now() - hostDisconnectedAt <= 20_000
+          && location.includes("/api/v1/servers/")
+          && /status of (403|502)/iu.test(message.text());
+        if (message.type() === "error" && !expectedUnauthenticatedSession && !expectedDisconnectTransition) {
+          pageErrors.push(`${message.text()} @ ${location} phase=${hostDisconnectedAt ? "disconnecting" : "connected"}`);
+        }
       });
     }
 
@@ -393,6 +405,7 @@ async function main() {
     await editorPage.getByText("設定変更", { exact: true }).waitFor({ state: "visible", timeout: 10_000 });
     await editorPage.screenshot({ path: join(screenshotDir, "editor-mobile-after-apply.png"), fullPage: false });
 
+    hostDisconnectedAt = Date.now();
     await host.close();
     await Promise.all([
       viewerPage.getByRole("heading", { name: "参加セッションが終了しました" }).waitFor({ state: "visible", timeout: 20_000 }),
@@ -406,6 +419,7 @@ async function main() {
       browser: "Brave via Playwright",
       contexts: { viewer: "desktop-1280x900", editor: "mobile-390x844" },
       isolatedSessions: true,
+      expectedBrowserEvents: ["pre-auth-session-401", "disconnect-transition-api-403-or-502"],
       flow: ["invite-redeem", "host-ready", "dual-approval", "viewer-read-only", "editor-confirmation", "settings-apply", "host-disconnect-revocation"],
       settingsChange: `${initialMaxPlayers}->${updatedMaxPlayers}`,
       screenshots: [join(screenshotDir, "viewer-desktop-dashboard.png"), join(screenshotDir, "editor-mobile-after-apply.png")],

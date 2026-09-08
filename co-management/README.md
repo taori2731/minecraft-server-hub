@@ -23,6 +23,14 @@ npm --prefix co-management/relay start
 
 生成済みUIを中継から配信する場合は、`MSH_CO_MANAGEMENT_UI_DIR` に `co-management/browser/dist` を指定します。既定のリッスン先は `127.0.0.1:8787` です。
 
+公開ステージングの合成2ブラウザ受入は、既存のBraveをPlaywrightから起動して次で実行できます。
+
+```powershell
+npm run test:co-management:staging
+```
+
+この試験はCloudflare経由の公開HTTPS/WSSへ合成ホストを接続し、デスクトップViewerとモバイルサイズEditorを別ブラウザコンテキストで参加させます。Viewerの変更禁止、Editorの変更前後確認・反映、監査表示、ホスト切断後の両セッション失効を確認します。招待秘密・ホストトークンは毎回メモリ内で生成し、出力しません。これは物理的なスマートフォン、別回線、実ゲームの代替ではありません。
+
 HTTPの非ループバック接続はRust側で拒否します。localhostの統合試験で確認できるのはHTTP/WSだけで、WSS検証とは別です。2026-09-08時点では、`staging.cohostrelay.online`のCloudflare経由HTTPS/WSS、Neon接続のready応答、公開エッジ経由のRustホスト統合試験を確認済みです。物理的な別回線、2ブラウザ手動試験、実ゲーム、署名済みパッケージ、本番可用性・監視・利用規約・プライバシー確認は別途必要です。
 
 ## プロトコル境界
