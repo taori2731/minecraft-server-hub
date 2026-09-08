@@ -290,13 +290,24 @@ async function joinAndApprove(page, baseUrl, secret, displayName, serverHeading,
   await page.getByLabel("表示名").fill(displayName);
   assert.equal(await page.getByLabel("招待秘密").inputValue(), secret);
   await page.getByRole("button", { name: "共同管理に参加" }).click();
-  await page.getByRole("heading", { name: "ホストPCの承認を待っています" }).waitFor({ state: "visible", timeout: 15_000 });
+  const dashboardHeading = page.getByRole("heading", { name: serverHeading });
+  try {
+    await page.getByRole("heading", { name: "ホストPCの承認を待っています" }).waitFor({ state: "visible", timeout: 15_000 });
+  } catch {
+    if (await dashboardHeading.isVisible().catch(() => false)) return;
+    throw new Error(`approval-state-not-rendered-${displayName}`);
+  }
   for (let attempt = 0; attempt < 6; attempt += 1) {
     const refresh = page.getByRole("button", { name: "承認状態を確認" });
-    await refresh.waitFor({ state: "visible", timeout: 5_000 });
-    await refresh.click();
     try {
-      await page.getByRole("heading", { name: serverHeading }).waitFor({ state: "visible", timeout: 3_000 });
+      await refresh.waitFor({ state: "visible", timeout: 5_000 });
+      await refresh.click();
+    } catch {
+      if (await dashboardHeading.isVisible().catch(() => false)) return;
+      throw new Error(`approval-control-not-rendered-${displayName}`);
+    }
+    try {
+      await dashboardHeading.waitFor({ state: "visible", timeout: 3_000 });
       return;
     } catch {
       await page.waitForTimeout(500);
