@@ -7,7 +7,6 @@ services:
     buildCommand: npm ci --include=dev && npm --prefix co-management/relay ci --include=dev && npm run build:co-management
     startCommand: npm --prefix co-management/relay run start:production
     healthCheckPath: /health/ready
-    maxShutdownDelaySeconds: 30
     envVars:
       - key: NODE_ENV
         value: production
