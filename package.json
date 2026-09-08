@@ -17,6 +17,7 @@
     "dev:co-management": "vite --config co-management/browser/vite.config.ts",
     "build:co-management": "npm run check:co-management && vite build --config co-management/browser/vite.config.ts",
     "test:co-management:staging": "node scripts/co-management-staging-two-browser-acceptance.mjs",
+    "test:co-management:manual-fixture": "node scripts/co-management-staging-manual-fixture.mjs",
     "test:co-management": "npm --prefix co-management/relay test",
     "check:developer-tools": "tsc --noEmit -p developer-tools/tsconfig.json",
     "quality:verify": "node scripts/quality-evidence.mjs",
