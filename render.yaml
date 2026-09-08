@@ -21,7 +21,7 @@ services:
       - key: MSH_CO_MANAGEMENT_TRUST_PROXY
         value: "0"
       - key: MSH_CO_MANAGEMENT_HSTS_MAX_AGE
-        value: "0"
+        value: "300"
       - key: MSH_CO_MANAGEMENT_DATABASE_URL
         sync: false
       - key: MSH_CO_MANAGEMENT_MIGRATION_DATABASE_URL

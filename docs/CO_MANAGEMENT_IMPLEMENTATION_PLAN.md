@@ -1,17 +1,17 @@
 # ブラウザ共同管理: 設計とLunaへの実装引き継ぎ
 
-状態: PostgreSQLアダプターを含むローカル実装・隔離テスト済み。CloudflareゾーンのTLS基本設定済み。本番オリジン、管理PostgreSQL、DNS公開、実WSS、課金契約は未実施。
+状態（2026-09-08）: PostgreSQLアダプターを含むローカル実装・隔離テスト済み。Render + Neon + Cloudflareのステージングを構築し、HTTPS/WSS、ready応答、公開エッジ経由のRustホスト統合試験を確認済み。本番分離・物理別回線・実ゲーム・パッケージ・課金契約は未実施。
 対象基準: Minecraft Server Hub 0.3.8。実装開始時に現行ファイルと未コミット変更を再確認する。
 
-## 現在の実装・証拠境界（2026-09-07）
+## 現在の実装・証拠境界（2026-09-08）
 
 CM1〜CM3のローカル実装と、U01〜U03の追加修正はコードと隔離テストで確認済みです。
 
 - U01: 共同管理の復旧ジャーナル、Palworld設定退避、Palworld設定を含むバックアップZIPの新規保存は、Windowsユーザー単位DPAPIで保護します。旧平文ジャーナルは自動削除せず、対象サーバーを指定した明示的な暗号化移行だけを行います。移行後のSQLite/WAL等の残留確認と、元バイト列の完全復元を合成秘密値で試験済みです。
 - U02: 変更後の内容と指紋をファイル書込み前に永続化し、新内容を証明できない途中状態では外部変更を上書きせず `needs_recovery` に分類します。外部変更なしの安全復旧と、変更済みファイルの保持を試験済みです。
 - U03: ジャーナル記録前に終了した操作を含め、ジャーナルのない `running` 操作を再起動時に分類します。書込み前と証明できるものは中断結果へ、書込み有無が不明なものは `needs_recovery` へ移す経路を試験済みです。
-- localhostの中継HTTP/WS、Rustホスト接続、ブラウザの型・ビルド・既存回帰テストは確認済みです。これは本番TLS/WSSの証明ではありません。
-- PostgreSQL永続化アダプター、TLS終端・WSS、共有レート制限、署名付きTauriパッケージ、別回線の2ブラウザ手動試験、実Minecraft/Palworld試験、公開・課金・実ユーザーデータ変更は未実施です。
+- localhostの中継HTTP/WS、Rustホスト接続、ブラウザの型・ビルド・既存回帰テストに加え、公開ステージングのHTTPS/WSS、Neonの起動マイグレーション・ready応答、公開エッジ経由のRustホスト統合試験を確認済みです。物理的な別回線での証明ではありません。
+- 署名付きTauriパッケージ、物理的な別回線の2ブラウザ手動試験、実Minecraft/Palworld試験、DB障害注入・復帰、監査保持・削除、本番分離、公開・課金・実ユーザーデータ変更は未実施です。
 
 この節は実装済み範囲を記録するものであり、CM4または本番公開の完了判定ではありません。旧形式の秘密データが存在する環境では、バックアップ取得と保管方針を確認した上で、ホスト画面の明示操作から移行結果を確認してください。
 
@@ -23,8 +23,10 @@ CM1〜CM3のローカル実装と、U01〜U03の追加修正はコードと隔�
 - PostgreSQLまたは共有レート制限が利用不能な場合、HTTPは503、認証済みホスト処理はWebSocket 1013で停止し、Memory Storeへフォールバックしない。
 - `/health/live`とDB依存の`/health/ready`、CSP、nosniff、Referrer-Policy、Permissions-Policy、任意の段階的HSTSヘッダーを追加した。
 - PGlite隔離DBで、同時招待引換、資格情報上書き拒否、複合操作ID、暗号文保存、共有レート制限、DB障害時停止を自動試験した。これは管理PostgreSQLやネットワーク障害の実機証明ではない。
+- RenderのNeon接続で起動マイグレーションと`/health/ready` 200を確認し、Cloudflare経由の`/health/live`・`/health/ready`が`Server: cloudflare`で応答することを確認した。これはDB障害注入・復帰の証明ではない。
+- Rustlsの暗号プロバイダーをアプリ起動時とHTTP/WSS接続前に明示選択し、公開ステージングのRust統合試験でホスト登録、`host.ready`、招待引換、参加申請、設定取得を確認した。
 - Cloudflareの`cohostrelay.online`はActive。Universal SSLとWebSocketsの有効を確認し、SSL/TLSをFull (strict)、Always Use HTTPSを有効、最小TLSを1.2へ変更した。
-- DNSレコードはオリジン未決定のため0件のまま。HSTSも、実HTTPS/WSSと全対象ホスト名を確認するまで未有効。詳細は `CO_MANAGEMENT_STAGING_RUNBOOK.md` を参照する。
+- `staging` CNAMEをRenderへ向けてCloudflare Proxyを有効化し、Render側のカスタムドメインVerified / Certificate Issued、HTTPS→リダイレクト、HSTS `max-age=300`を確認した。詳細は `CO_MANAGEMENT_STAGING_RUNBOOK.md` を参照する。
 
 ## 1. 初版の完成条件
 

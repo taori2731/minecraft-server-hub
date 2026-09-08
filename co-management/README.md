@@ -5,7 +5,7 @@
 現在の実装範囲は次のとおりです。
 
 - ホストPC: Rust/Tauri がサーバー状態、権限、停止判定、バックアップ、設定ファイル指紋、revision、idempotency を管理します。
-- 中継: `relay/` の Fastify + `ws` 実装が、localhost開発時のHTTP/WSを仲介します。本番のHTTPS/WSSは未構築です。
+- 中継: `relay/` の Fastify + `ws` 実装が、localhost開発時のHTTP/WSと、Render + Cloudflareで構成したステージングのHTTPS/WSSを仲介します。ステージングの公開TLS/WSSとRust接続は確認済みですが、本番可用性の構成ではありません。
 - ブラウザ: `browser/` は独立したReact + Vite画面で、招待参加、承認待ち、サーバー概要、設定申請、監査ログを提供します。
 - 共有しない値: ローカルパス、Java実行ファイル、ゲームパスワード、REST管理パスワード、ホストトークン、任意コマンド。
 
@@ -23,7 +23,7 @@ npm --prefix co-management/relay start
 
 生成済みUIを中継から配信する場合は、`MSH_CO_MANAGEMENT_UI_DIR` に `co-management/browser/dist` を指定します。既定のリッスン先は `127.0.0.1:8787` です。
 
-HTTPの非ループバック接続はRust側で拒否します。localhostの統合試験で確認できるのはHTTP/WSだけで、WSS検証とは別です。公開・ステージング運用には、TLS終端、WSS、永続セッションストレージ、レート制限の共有状態、秘密管理、バックアップ、監視、利用規約・プライバシー確認が別途必要です。現時点でそれらを構築済み・公開済みとは扱いません。
+HTTPの非ループバック接続はRust側で拒否します。localhostの統合試験で確認できるのはHTTP/WSだけで、WSS検証とは別です。2026-09-08時点では、`staging.cohostrelay.online`のCloudflare経由HTTPS/WSS、Neon接続のready応答、公開エッジ経由のRustホスト統合試験を確認済みです。物理的な別回線、2ブラウザ手動試験、実ゲーム、署名済みパッケージ、本番可用性・監視・利用規約・プライバシー確認は別途必要です。
 
 ## プロトコル境界
 
@@ -33,4 +33,4 @@ HTTPの非ループバック接続はRust側で拒否します。localhostの統
 
 ローカル開発は `MemoryRelayStore`、PostgreSQL接続情報とリレー鍵を指定した環境は `PostgresRelayStore` を使用します。番号付きマイグレーションは `relay/migrations/` にあり、`npm --prefix co-management/relay run migrate` で適用します。アプリ起動時はマイグレーションの名前とチェックサムを検証し、不足・改変時は起動を停止します。
 
-PostgreSQLアダプターは複合キーによるホスト・サーバー・参加者・操作の分離、招待の原子的な1回引換、暗号化した照合コードと操作結果、共有レート制限を実装します。DB接続障害時は503またはWebSocket 1013で停止し、Memory Storeへフォールバックしません。実管理PostgreSQL、TLS/WSS、別回線の受入は `docs/CO_MANAGEMENT_STAGING_RUNBOOK.md` の未検証項目です。
+PostgreSQLアダプターは複合キーによるホスト・サーバー・参加者・操作の分離、招待の原子的な1回引換、暗号化した照合コードと操作結果、共有レート制限を実装します。ステージングではNeonへのマイグレーションと`/health/ready`を確認済みです。DB接続障害時は503またはWebSocket 1013で停止し、Memory Storeへフォールバックしませんが、障害注入・復帰、監査保持・削除の実DB受入は未完了です。残りの受入項目は `docs/CO_MANAGEMENT_STAGING_RUNBOOK.md` に記録しています。

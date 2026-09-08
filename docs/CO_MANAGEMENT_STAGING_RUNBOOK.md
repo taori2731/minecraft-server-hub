@@ -1,6 +1,6 @@
 # 共同管理ステージング運用手順
 
-状態: コードとCloudflareゾーンの準備手順。オリジン、実PostgreSQL、WSS別回線試験は未完了。
+状態（2026-09-08）: 無料ステージングのRenderオリジン、Neon PostgreSQL、Cloudflare DNS/TLS/WSSを構築済み。公開エッジ経由のRustホスト統合試験とhealth確認も完了。物理的な別回線、2ブラウザ手動試験、実ゲーム、署名済みパッケージ、本番運用は未完了。
 
 ## 無料ステージング構成
 
@@ -27,10 +27,11 @@
 - Always Use HTTPSは有効。
 - 最小TLSは1.2。
 - TLS 1.3とWebSocketsは有効。
-- DNSレコードは0件。オリジン未決定のため、推測したA/CNAMEは追加していない。
-- HSTSは未有効。オリジンのHTTPS/WSSを確認してから短いmax-ageで開始する。
+- DNSレコードは`staging` CNAME → `cohostrelay-staging.onrender.com`の1件で、Cloudflare Proxy（Proxied）を有効化済み。
+- RenderのカスタムドメインはVerified / Certificate Issued。
+- アプリのHSTSは`Strict-Transport-Security: max-age=300`で段階導入済み。延長は全対象ホスト名の受入後に行う。
 
-オリジン設置後に、`staging`のAまたはCNAMEを1件追加し、Proxy statusをProxiedにする。オリジンは有効な公開CA証明書またはCloudflare Origin CA証明書を提示し、Cloudflare以外からの直接アクセスをファイアウォールまたはトンネルで拒否する。
+現在のステージングは上記の設定で稼働しています。Renderの`onrender.com`サブドメインはまだ有効で、直接オリジン経路の無効化やファイアウォール制限は未実施です。本番化する場合は、Cloudflare経由だけを許可する構成と、鍵・DB・Cookieの本番分離を別途確認してください。
 
 ## PostgreSQL
 
@@ -42,7 +43,7 @@
 6. アプリ起動時の`verifyMigrations`が不一致なら起動を停止する。
 7. 接続プール上限、接続タイムアウト、statement timeoutを監視する。
 
-## Render作成順序
+## Render作成順序（実施記録）
 
 1. ソースを非公開Gitリポジトリへ保存する。秘密値、`.env`、実ユーザーデータを含めない。
 2. RenderでBlueprintを作り、リポジトリの`render.yaml`を選ぶ。
@@ -52,7 +53,7 @@
 6. RenderのCustom Domainsに`staging.cohostrelay.online`を追加する。
 7. Cloudflareで`staging` CNAMEをRenderの`onrender.com`名へ向け、最初はDNS onlyでRenderの証明書検証を完了する。
 8. HTTPS/WSSを検証後、Cloudflare Proxiedへ変更する。直接`onrender.com`経路を無効化できることを確認してから`MSH_CO_MANAGEMENT_TRUST_PROXY=1`を検討する。
-9. HSTSは最後に`300`秒から開始する。
+9. HSTSはHTTPS/WSS確認後に`300`秒から開始する。完了（2026-09-08）。
 
 ## リレー鍵
 
@@ -76,7 +77,7 @@
 - `/health/ready`がDB停止時に503
 - DB停止時に書込みAPIが503で、Memory Storeへフォールバックしない
 - ホストWSS切断時にスナップショット・招待・参加者が失効
-- HSTSはHTTPS/WSS合格後に`300`から開始し、段階的に延長する
+- HSTSはHTTPS/WSS合格後に`300`から開始済み。全対象ホスト名の受入後に段階的に延長する
 
 ## Cloudflare DNSを追加する条件
 
@@ -88,11 +89,10 @@
 
 RenderへCloudflare管理ドメインを関連付ける際は、先にRender側へカスタムドメインを登録する。Renderの所有権・証明書検証中はCNAMEをDNS onlyにし、検証完了後にCloudflare Proxiedへ切り替える。
 
-## 未検証
+## 未検証・残作業
 
-- 管理PostgreSQL上でのマイグレーション、同時招待引換、共有レート制限、DB停止・復帰
-- Cloudflare経由のHTTPS/WSS
-- 別ネットワークのRustホスト接続
+- 管理PostgreSQLの障害注入・復帰、監査保持・削除、同時実行の実DB受入（Neon接続・起動マイグレーション・ready応答は確認済み）
+- 物理的な別ネットワークからのRustホスト接続（今回のRust試験は公開エッジ経由だが、同一作業環境からの実行）
 - 署名済みTauriパッケージ
 - PCと実スマートフォンの2ブラウザ
 - Minecraft Java、Bedrock、Palworldの実機CM4
