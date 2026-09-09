@@ -26,7 +26,8 @@
     "test:developer-tools": "node --test scripts/developer-inspection.node.mjs && vitest run --config developer-tools/vite.config.ts",
     "test:ui": "node scripts/ui-smoke.cjs",
     "test:watch": "vitest",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "build:verify:signed": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-verify-signed-package.ps1"
   },
   "dependencies": {
     "@tauri-apps/api": "2.11.1",
