@@ -38,6 +38,35 @@ class PGlitePool implements SqlPool {
   }
 }
 
+class FaultInjectingPool implements SqlPool {
+  private remainingFailures = 1;
+
+  constructor(
+    private readonly base: SqlPool,
+    private readonly sqlFragment: string,
+  ) {}
+
+  private run<T>(sql: string, operation: () => Promise<T>): Promise<T> {
+    if (this.remainingFailures > 0 && sql.includes(this.sqlFragment)) {
+      this.remainingFailures -= 1;
+      return Promise.reject(new Error("injected-database-failure"));
+    }
+    return operation();
+  }
+
+  query<T extends QueryResultRow = QueryResultRow>(sql: string, values?: unknown[]): Promise<{ rows: T[]; rowCount: number | null }> {
+    return this.run(sql, () => this.base.query<T>(sql, values));
+  }
+
+  async connect(): Promise<SqlConnection> {
+    const client = await this.base.connect();
+    return {
+      query: <T extends QueryResultRow = QueryResultRow>(sql: string, values?: unknown[]) => this.run(sql, () => client.query<T>(sql, values)),
+      release: client.release?.bind(client),
+    };
+  }
+}
+
 async function fixture(clock: () => Date = () => new Date("2026-09-08T00:00:00.000Z")) {
   const database = new PGlite();
   const migration = await readFile(defaultMigrationsDirectory() + "/001_initial.sql", "utf8");
@@ -47,7 +76,7 @@ async function fixture(clock: () => Date = () => new Date("2026-09-08T00:00:00.0
   const pool = new PGlitePool(database);
   const key = Buffer.alloc(32, 7).toString("base64url");
   const keyring = RelayKeyring.fromEnvironment(`test-v1:${key}`);
-  return { database, pool, store: new PostgresRelayStore(pool, keyring, clock) };
+  return { database, pool, keyring, store: new PostgresRelayStore(pool, keyring, clock) };
 }
 
 test("PostgresRelayStore atomically redeems one invite and persists an approved session", async (t) => {
@@ -136,6 +165,67 @@ test("PostgresRelayStore scopes idempotency and encrypts persisted operation res
   });
   const nullRequestAudit = await database.query<{ count: string }>("SELECT count(*)::text AS count FROM co_management_audit WHERE request_id IS NULL");
   assert.equal(nullRequestAudit.rows[0].count, "1");
+});
+
+test("PostgresRelayStore rolls back every transaction step on injected failure", async (t) => {
+  const { database, pool, keyring, store } = await fixture();
+  t.after(async () => database.close());
+  const token = "host-token-" + "a".repeat(40);
+  const secret = "invite-secret-" + "b".repeat(40);
+  await store.registerHost("host-test", token);
+  await store.bindHostServer("host-test", "server-test");
+  await store.setSnapshot("host-test", {
+    serverId: "server-test", serverName: "Test", gameKind: "java", state: "stopped",
+    playerCount: 0, maxPlayers: 20, fetchedAt: "2026-09-08T00:00:00.000Z", revision: 1, capabilities: [],
+  });
+  await store.registerInvite({
+    inviteId: "invite-test", serverId: "server-test", hostId: "host-test",
+    secretHash: hashRelaySecret(secret), role: "editor", expiresAt: "2026-09-08T00:10:00.000Z",
+  });
+  const redeemed = await store.redeemInvite(secret, "Takeru");
+
+  const disconnectingStore = new PostgresRelayStore(
+    new FaultInjectingPool(pool, "UPDATE co_management_invites"),
+    keyring,
+  );
+  await assert.rejects(() => disconnectingStore.disconnectHost("host-test"), RelayStorageUnavailableError);
+  assert.ok(await store.snapshot("host-test", "server-test"));
+  assert.equal((await store.participant("host-test", redeemed.session.participantId))?.state, "pending");
+  const inviteState = await database.query<{ used_at: string | null; revoked_at: string | null }>(
+    "SELECT used_at::text, revoked_at::text FROM co_management_invites WHERE host_id = 'host-test' AND invite_id = 'invite-test'",
+  );
+  assert.ok(inviteState.rows[0].used_at);
+  assert.equal(inviteState.rows[0].revoked_at, null);
+
+  const record = {
+    requestId: "request-rollback",
+    serverId: "server-test",
+    hostId: "host-test",
+    participantId: redeemed.session.participantId,
+    contentHash: "d".repeat(64),
+    state: "completed" as const,
+    result: { status: "saved" },
+    updatedAt: "2026-09-08T00:01:00.000Z",
+  };
+  await assert.rejects(
+    () => new PostgresRelayStore(new FaultInjectingPool(pool, "INSERT INTO co_management_audit"), keyring).saveOperation(record, {
+      hostId: record.hostId,
+      serverId: record.serverId,
+      actorId: record.participantId,
+      actorDisplayName: "Takeru",
+      action: "settings.patch",
+      changedKeys: ["maxPlayers"],
+      result: "success",
+      requestId: record.requestId,
+      at: record.updatedAt,
+    }),
+    RelayStorageUnavailableError,
+  );
+  assert.equal(await store.operation(record.hostId, record.serverId, record.participantId, record.requestId), undefined);
+  const auditRows = await database.query<{ count: string }>(
+    "SELECT count(*)::text AS count FROM co_management_audit WHERE request_id = 'request-rollback'",
+  );
+  assert.equal(auditRows.rows[0].count, "0");
 });
 
 test("PostgresRelayMaintenance retains the newest audit rows per server and only deletes expired rate limits", async (t) => {
