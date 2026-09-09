@@ -28,6 +28,8 @@ CM1〜CM3のローカル実装と、U01〜U03の追加修正はコードと隔�
 - PGlite隔離DBで、同時招待引換、資格情報上書き拒否、複合操作ID、暗号文保存、共有レート制限、DB障害時停止を自動試験した。これは管理PostgreSQLやネットワーク障害の実機証明ではない。
 - RenderのNeon接続で起動マイグレーションと`/health/ready` 200を確認し、Cloudflare経由の`/health/live`・`/health/ready`が`Server: cloudflare`で応答することを確認した。これはDB障害注入・復帰の証明ではない。
 - Rustlsの暗号プロバイダーをアプリ起動時とHTTP/WSS接続前に明示選択し、公開ステージングのRust統合試験でホスト登録、`host.ready`、招待引換、参加申請、設定取得を確認した。
+- 開発用`MemoryRelayStore`はホスト、ホストごとのサーバー、招待、参加者、セッション、snapshot、操作結果に上限を持ち、期限切れ・失効済みデータと保持期間を過ぎた終端操作だけを新規保存前に回収する。上限に達して安全に回収できない場合は`relay-memory-capacity`で停止し、実行中操作を捨てたりPostgreSQLへフォールバックしたりしない。
+- Rustホストのイベントキューは512件で上限を設け、満杯または受信イベントが不正な大きさの場合はイベントを黙って捨てず接続を切断して不確定状態にする。UIへ成功結果を渡せない場合に、設定変更を成功扱いにしないための境界である。
 - Cloudflareの`cohostrelay.online`はActive。Universal SSLとWebSocketsの有効を確認し、SSL/TLSをFull (strict)、Always Use HTTPSを有効、最小TLSを1.2へ変更した。
 - `staging` CNAMEをRenderへ向けてCloudflare Proxyを有効化し、Render側のカスタムドメインVerified / Certificate Issued、HTTPS→リダイレクト、HSTS `max-age=300`を確認した。詳細は `CO_MANAGEMENT_STAGING_RUNBOOK.md` を参照する。
 

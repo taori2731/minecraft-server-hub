@@ -2,8 +2,8 @@ import assert from "node:assert/strict";
 import type { AddressInfo } from "node:net";
 import { test } from "node:test";
 import { WebSocket } from "ws";
-import { assertRelayRuntimeConfiguration, configuredPort, createRelayServer } from "./server.ts";
-import { MemoryRelayStore, SESSION_ABSOLUTE_MS, SESSION_IDLE_MS, hashRelaySecret } from "./store.ts";
+import { assertRelayRuntimeConfiguration, configuredPort, createRelayServer, MemoryRateLimiter } from "./server.ts";
+import { MEMORY_OPERATION_RETENTION_MS, MemoryRelayStore, SESSION_ABSOLUTE_MS, SESSION_IDLE_MS, hashRelaySecret } from "./store.ts";
 import { isSafePublicSnapshot } from "../../shared/protocol.ts";
 
 const origin = "http://127.0.0.1:8787";
@@ -176,6 +176,70 @@ test("session expiry is independent from the invitation and polling does not ext
   assert.equal(store.sessionView(redeemed.session.sessionId)?.state, "expired");
 });
 
+test("MemoryRelayStore bounds state and reclaims only expired or terminal records", () => {
+  let current = Date.parse("2026-09-07T00:00:00.000Z");
+  const store = new MemoryRelayStore(() => new Date(current), {
+    maxHosts: 1,
+    maxServersPerHost: 2,
+    maxInvites: 1,
+    maxParticipants: 1,
+    maxSessions: 1,
+    maxSnapshots: 1,
+    maxOperations: 1,
+  });
+  store.registerHost("host-test", token);
+  assert.throws(() => store.registerHost("host-overflow", "u".repeat(48)), /relay-memory-capacity/u);
+  store.bindHostServer("host-test", "server-test");
+  store.bindHostServer("host-test", "server-second");
+  const snapshot = (serverId: string) => ({
+    serverId, serverName: serverId, gameKind: "java", state: "stopped",
+    playerCount: 0, maxPlayers: 20, fetchedAt: new Date(current).toISOString(), revision: 1, capabilities: [],
+  });
+  store.setSnapshot("host-test", snapshot("server-test"));
+  assert.throws(() => store.setSnapshot("host-test", snapshot("server-second")), /relay-memory-capacity/u);
+
+  store.registerInvite({
+    inviteId: "invite-first", serverId: "server-test", hostId: "host-test",
+    secretHash: hashRelaySecret("a".repeat(48)), role: "viewer",
+    expiresAt: new Date(current + 1_000).toISOString(),
+  });
+  const first = store.redeemInvite("a".repeat(48), "First");
+  current += 2_000;
+  store.registerInvite({
+    inviteId: "invite-second", serverId: "server-test", hostId: "host-test",
+    secretHash: hashRelaySecret("b".repeat(48)), role: "viewer",
+    expiresAt: new Date(current + 60_000).toISOString(),
+  });
+  const second = store.redeemInvite("b".repeat(48), "Second");
+  assert.notEqual(first.session.sessionId, second.session.sessionId);
+
+  store.saveOperation({
+    requestId: "operation-first", hostId: "host-test", serverId: "server-test", participantId: second.session.participantId,
+    state: "completed", result: { ok: true }, updatedAt: new Date(current).toISOString(),
+  });
+  current += MEMORY_OPERATION_RETENTION_MS + 1;
+  store.saveOperation({
+    requestId: "operation-second", hostId: "host-test", serverId: "server-test", participantId: second.session.participantId,
+    state: "completed", result: { ok: true }, updatedAt: new Date(current).toISOString(),
+  });
+  assert.equal(store.operation("host-test", "server-test", second.session.participantId, "operation-first"), undefined);
+  assert.deepEqual(store.operation("host-test", "server-test", second.session.participantId, "operation-second")?.result, { ok: true });
+  assert.throws(() => store.saveOperation({
+    requestId: "operation-running", hostId: "host-test", serverId: "server-test", participantId: second.session.participantId,
+    state: "running", updatedAt: new Date(current).toISOString(),
+  }), /relay-memory-capacity/u);
+});
+
+test("MemoryRateLimiter reclaims expired windows and fails closed at capacity", async () => {
+  let current = 0;
+  const limiter = new MemoryRateLimiter({ maxEntries: 1, clock: () => current });
+  assert.equal(await limiter.consume("first", 1, 1_000), true);
+  assert.equal(await limiter.consume("first", 1, 1_000), false);
+  await assert.rejects(limiter.consume("second", 1, 1_000), /relay-memory-capacity/u);
+  current = 2_001;
+  assert.equal(await limiter.consume("second", 1, 1_000), true);
+});
+
 test("host disconnect removes cached snapshots and revokes existing sessions", () => {
   const store = new MemoryRelayStore();
   store.registerHost("host-test", token);
@@ -276,7 +340,7 @@ test("relay requires the CSRF cookie/header pair to close a session", async (t) 
 });
 
 test("relay bridges a host WebSocket request without exposing host-only fields", async (t) => {
-  const relay = createRelayServer({ secureCookies: false, allowedOrigins: [origin] });
+  const relay = createRelayServer({ secureCookies: false, allowedOrigins: [origin], maxPendingHostRequests: 1 });
   t.after(async () => relay.close());
   const base = await relay.start(0, "127.0.0.1");
   const address = relay.app.server.address() as AddressInfo;
@@ -346,6 +410,9 @@ test("relay bridges a host WebSocket request without exposing host-only fields",
   const delayedRequestId = "request-timeout-1234";
   const delayedPatchRequest = relay.app.inject({ method: "PATCH", url: "/api/v1/servers/server-test/settings", headers: { origin, cookie: cookieHeader, "x-csrf-token": decodeURIComponent(cookies.find((value) => value.startsWith("msh_co_csrf="))!.split(";", 1)[0].slice("msh_co_csrf=".length)) }, payload: { requestId: delayedRequestId, expectedRevision: 2, changes: { difficulty: "normal" } } });
   const delayedPatchMessage = await waitForSocketMessage(hostSocket, (payload) => payload.type === "settings.patch" && payload.operationId === delayedRequestId);
+  const busySettings = await relay.app.inject({ method: "GET", url: "/api/v1/servers/server-test/settings", headers: { origin, cookie: cookieHeader } });
+  assert.equal(busySettings.statusCode, 503);
+  assert.deepEqual(busySettings.json(), { error: "relay-busy" });
   setTimeout(() => {
     hostSocket.send(JSON.stringify({ type: "host.response", protocolVersion: 1, serverId: "server-test", requestId: delayedPatchMessage.requestId, ok: true, result: { requestId: delayedRequestId, serverId: "server-test", revision: 3, changedFields: ["difficulty"], settings: { serverId: "server-test", gameKind: "java", state: "stopped", revision: 3, fetchedAt: new Date().toISOString(), fields: { difficulty: "normal" }, capabilities: [], editable: true }, message: "delayed-ok" } }));
   }, 10_100);

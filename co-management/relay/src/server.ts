@@ -34,6 +34,8 @@ import { verifyMigrations } from "./migrations.ts";
 
 const MAX_BODY_BYTES = 64 * 1024;
 const MAX_WS_BYTES = 256 * 1024;
+export const MAX_PENDING_HOST_REQUESTS = 1_024;
+export const DEFAULT_MEMORY_RATE_LIMIT_ENTRIES = 10_000;
 const SESSION_COOKIE = "msh_co_session";
 const CSRF_COOKIE = "msh_co_csrf";
 const REQUEST_ID_RE = /^[A-Za-z0-9_-]{8,128}$/u;
@@ -74,6 +76,7 @@ export interface RelayServerOptions {
   readinessCheck?: () => Promise<void>;
   trustProxy?: boolean;
   hstsMaxAgeSeconds?: number;
+  maxPendingHostRequests?: number;
 }
 
 export interface RelayServer {
@@ -133,16 +136,49 @@ interface PendingHostRequest {
 interface RateWindow {
   startedAt: number;
   count: number;
+  expiresAt: number;
 }
 
-class MemoryRateLimiter implements SharedRateLimiter {
+export interface MemoryRateLimiterOptions {
+  maxEntries?: number;
+  clock?: () => number;
+}
+
+export class MemoryRateLimiter implements SharedRateLimiter {
   private readonly rates = new Map<string, RateWindow>();
+  private readonly maxEntries: number;
+  private readonly clock: () => number;
+
+  constructor(options: MemoryRateLimiterOptions = {}) {
+    this.maxEntries = options.maxEntries ?? DEFAULT_MEMORY_RATE_LIMIT_ENTRIES;
+    this.clock = options.clock ?? (() => Date.now());
+    if (!Number.isSafeInteger(this.maxEntries) || this.maxEntries < 1) {
+      throw new Error("invalid-memory-limits");
+    }
+  }
+
+  private pruneExpired(timestamp: number): void {
+    for (const [identifier, window] of this.rates) {
+      if (window.expiresAt <= timestamp) this.rates.delete(identifier);
+    }
+  }
 
   async consume(identifier: string, limit: number, windowMs: number): Promise<boolean> {
-    const timestamp = Date.now();
+    if (!Number.isSafeInteger(limit) || limit < 1 || !Number.isSafeInteger(windowMs) || windowMs < 1) {
+      throw new Error("invalid-rate-limit");
+    }
+    const timestamp = this.clock();
+    this.pruneExpired(timestamp);
     const current = this.rates.get(identifier);
     if (!current || timestamp - current.startedAt >= windowMs) {
-      this.rates.set(identifier, { startedAt: timestamp, count: 1 });
+      if (!current && this.rates.size >= this.maxEntries) {
+        throw new Error("relay-memory-capacity");
+      }
+      this.rates.set(identifier, {
+        startedAt: timestamp,
+        count: 1,
+        expiresAt: timestamp + windowMs * 2,
+      });
       return true;
     }
     current.count += 1;
@@ -194,7 +230,9 @@ function constantTimeEqual(left: string | undefined, right: string | undefined):
 
 function genericError(error: unknown): RelayError {
   if (error instanceof RelayError) return error;
-  if (error instanceof HostRequestError) return new RelayError(502, error.code, error.safeMessage);
+  if (error instanceof HostRequestError) {
+    return new RelayError(error.code === "relay-busy" ? 503 : 502, error.code, error.safeMessage);
+  }
   if (error instanceof RelayStorageUnavailableError) return new RelayError(503, "relay-storage-unavailable");
   if (error instanceof Error) {
     switch (error.message) {
@@ -212,6 +250,8 @@ function genericError(error: unknown): RelayError {
         return new RelayError(409, "host-registration-conflict");
       case "request-id-reused":
         return new RelayError(409, "request-id-reused");
+      case "relay-memory-capacity":
+        return new RelayError(503, "relay-memory-capacity");
       case "participant-expired":
         return new RelayError(403, "session-not-authorized");
       default:
@@ -427,6 +467,10 @@ export function createRelayServer(options: RelayServerOptions = {}): RelayServer
     "http://localhost:8788",
   ]);
   const secureCookies = options.secureCookies ?? process.env.NODE_ENV === "production";
+  const maxPendingHostRequests = options.maxPendingHostRequests ?? MAX_PENDING_HOST_REQUESTS;
+  if (!Number.isSafeInteger(maxPendingHostRequests) || maxPendingHostRequests < 1) {
+    throw new Error("invalid-memory-limits");
+  }
   const app = fastify({ logger: false, bodyLimit: MAX_BODY_BYTES, trustProxy: options.trustProxy ?? false });
   const sockets = new Map<string, WebSocket>();
   const queuedHostEvents = new Map<string, JsonObject[]>();
@@ -501,6 +545,9 @@ export function createRelayServer(options: RelayServerOptions = {}): RelayServer
     const socket = sockets.get(hostId);
     if (!socket || socket.readyState !== WebSocket.OPEN) {
       throw new HostRequestError("host-offline", "ホストPCが接続していません");
+    }
+    if (pending.size >= maxPendingHostRequests) {
+      throw new HostRequestError("relay-busy", "中継が一時的に混雑しています。しばらくしてから再試行してください");
     }
     // Relay correlation IDs must never be controlled by a browser operation
     // ID. More than one participant may legitimately choose the same ID.
@@ -1204,6 +1251,8 @@ export function createRelayServer(options: RelayServerOptions = {}): RelayServer
     async close() {
       clearInterval(heartbeat);
       for (const socket of connectedSockets) socket.terminate();
+      sockets.clear();
+      queuedHostEvents.clear();
       wss.close();
       for (const item of pending.values()) {
         clearTimeout(item.timeoutTimer);
@@ -1211,6 +1260,8 @@ export function createRelayServer(options: RelayServerOptions = {}): RelayServer
         item.reject(new HostRequestError("relay-closed", "中継が停止しました"));
       }
       pending.clear();
+      connectedSockets.clear();
+      socketAlive.clear();
       await app.close();
       await options.onClose?.();
     },

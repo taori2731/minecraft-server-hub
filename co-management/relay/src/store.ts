@@ -10,6 +10,33 @@ export const SESSION_ABSOLUTE_MS = 12 * 60 * 60 * 1_000;
 export const SESSION_IDLE_MS = 30 * 60 * 1_000;
 export const AUDIT_RETENTION_MS = 90 * 24 * 60 * 60 * 1_000;
 export const AUDIT_MAX_ROWS_PER_SCOPE = 10_000;
+/**
+ * The in-memory store is development-only. Keep terminal operation results
+ * long enough for the normal retry/recovery window, then reclaim them when a
+ * new entry needs space. The PostgreSQL adapter has its own persistence and
+ * maintenance policy.
+ */
+export const MEMORY_OPERATION_RETENTION_MS = 24 * 60 * 60 * 1_000;
+
+export interface MemoryRelayStoreLimits {
+  maxHosts: number;
+  maxServersPerHost: number;
+  maxInvites: number;
+  maxParticipants: number;
+  maxSessions: number;
+  maxSnapshots: number;
+  maxOperations: number;
+}
+
+export const DEFAULT_MEMORY_RELAY_STORE_LIMITS: Readonly<MemoryRelayStoreLimits> = {
+  maxHosts: 1_024,
+  maxServersPerHost: 64,
+  maxInvites: 4_096,
+  maxParticipants: 4_096,
+  maxSessions: 4_096,
+  maxSnapshots: 4_096,
+  maxOperations: 10_000,
+};
 
 export interface HostRecord {
   hostId: string;
@@ -194,7 +221,18 @@ export class MemoryRelayStore implements RelayStore {
   private readonly operations = new Map<string, OperationRecord>();
   private audits: RelayAuditRecord[] = [];
 
-  constructor(private readonly clock: () => Date = () => new Date()) {}
+  private readonly limits: MemoryRelayStoreLimits;
+
+  constructor(
+    private readonly clock: () => Date = () => new Date(),
+    limits: Partial<MemoryRelayStoreLimits> = {},
+  ) {
+    const resolved = { ...DEFAULT_MEMORY_RELAY_STORE_LIMITS, ...limits };
+    if (Object.values(resolved).some((value) => !Number.isSafeInteger(value) || value < 1)) {
+      throw new Error("invalid-memory-limits");
+    }
+    this.limits = resolved;
+  }
 
   private now(): string {
     return this.clock().toISOString();
@@ -216,6 +254,54 @@ export class MemoryRelayStore implements RelayStore {
     return key(hostId, serverId, participantId, requestId);
   }
 
+  /**
+   * Reclaim only records that can no longer authorize a browser or change an
+   * operation outcome. Active hosts, bindings, snapshots, pending invites,
+   * approved participants, and running operations are never evicted.
+   */
+  private pruneExpiredRecords(nowMs = this.clock().getTime()): void {
+    for (const participant of this.participants.values()) {
+      const pendingExpiresAt = this.milliseconds(participant.pendingExpiresAt);
+      const absoluteExpiresAt = this.milliseconds(participant.expiresAt);
+      const pendingExpired = participant.state === "pending"
+        && (!Number.isFinite(pendingExpiresAt) || nowMs >= pendingExpiresAt);
+      const sessionExpired = !Number.isFinite(absoluteExpiresAt) || nowMs >= absoluteExpiresAt;
+      if (participant.state === "revoked" || pendingExpired || sessionExpired) {
+        participant.state = "revoked";
+      }
+    }
+
+    for (const [sessionId, session] of this.sessions) {
+      const participant = this.participants.get(this.participantKey(session.hostId, session.participantId));
+      if (participant?.state === "revoked" || this.sessionExpired(session, nowMs)) {
+        this.sessions.delete(sessionId);
+      }
+    }
+
+    for (const [participantKey, participant] of this.participants) {
+      if (participant.state === "revoked") this.participants.delete(participantKey);
+    }
+
+    for (const [inviteKey, invite] of this.invites) {
+      const expiresAt = this.milliseconds(invite.expiresAt);
+      if (invite.usedAt || invite.revokedAt || !Number.isFinite(expiresAt) || nowMs >= expiresAt) {
+        this.invites.delete(inviteKey);
+      }
+    }
+
+    for (const [operationKey, operation] of this.operations) {
+      const updatedAt = this.milliseconds(operation.updatedAt);
+      if (operation.state !== "running"
+        && (!Number.isFinite(updatedAt) || nowMs - updatedAt >= MEMORY_OPERATION_RETENTION_MS)) {
+        this.operations.delete(operationKey);
+      }
+    }
+  }
+
+  private requireCapacity(size: number, limit: number): void {
+    if (size >= limit) throw new Error("relay-memory-capacity");
+  }
+
   registerHost(hostId: string, token: string): void {
     const tokenHash = sha256(token);
     const previous = this.hosts.get(hostId);
@@ -223,6 +309,10 @@ export class MemoryRelayStore implements RelayStore {
       // An ID is not proof of possession. Credential rotation requires an
       // authenticated recovery flow, which this local relay does not expose.
       throw new Error("host-registration-conflict");
+    }
+    if (!previous) {
+      this.pruneExpiredRecords();
+      this.requireCapacity(this.hosts.size, this.limits.maxHosts);
     }
     this.hosts.set(hostId, {
       hostId,
@@ -247,6 +337,7 @@ export class MemoryRelayStore implements RelayStore {
   bindHostServer(hostId: string, serverId: string): void {
     if (!this.hasHost(hostId)) throw new Error("host-not-registered");
     const servers = this.hostServers.get(hostId) ?? new Set<string>();
+    if (!servers.has(serverId)) this.requireCapacity(servers.size, this.limits.maxServersPerHost);
     servers.add(serverId);
     this.hostServers.set(hostId, servers);
   }
@@ -262,9 +353,15 @@ export class MemoryRelayStore implements RelayStore {
     if (this.milliseconds(input.expiresAt) <= this.clock().getTime()) throw new Error("invite-expired");
     const inviteKey = key(input.hostId, input.inviteId);
     const previous = this.invites.get(inviteKey);
-    if (previous && (previous.secretHash !== input.secretHash || previous.serverId !== input.serverId)) {
+    if (previous && (previous.secretHash !== input.secretHash
+      || previous.serverId !== input.serverId
+      || previous.role !== input.role
+      || previous.expiresAt !== input.expiresAt)) {
       throw new Error("invite-id-conflict");
     }
+    if (previous) return;
+    this.pruneExpiredRecords();
+    this.requireCapacity(this.invites.size, this.limits.maxInvites);
     this.invites.set(inviteKey, { ...input, issuedAt: input.issuedAt ?? this.now() });
   }
 
@@ -280,6 +377,9 @@ export class MemoryRelayStore implements RelayStore {
     if (displayName.trim().length === 0 || displayName.trim().length > 32 || /[\u0000-\u001f\u007f]/u.test(displayName)) {
       throw new Error("invalid-display-name");
     }
+    this.pruneExpiredRecords();
+    this.requireCapacity(this.participants.size, this.limits.maxParticipants);
+    this.requireCapacity(this.sessions.size, this.limits.maxSessions);
     const issuedAt = this.now();
     const participantId = randomId("participant");
     const sessionId = randomId("session");
@@ -318,8 +418,7 @@ export class MemoryRelayStore implements RelayStore {
     };
   }
 
-  private sessionExpired(session: SessionRecord): boolean {
-    const current = this.clock().getTime();
+  private sessionExpired(session: SessionRecord, current = this.clock().getTime()): boolean {
     const absolute = this.milliseconds(session.expiresAt);
     const idle = this.milliseconds(session.lastInteractionAt) + SESSION_IDLE_MS;
     return !Number.isFinite(absolute) || !Number.isFinite(idle) || current >= absolute || current >= idle;
@@ -424,7 +523,12 @@ export class MemoryRelayStore implements RelayStore {
 
   setSnapshot(hostId: string, snapshot: PublicServerSnapshot): void {
     if (JSON.stringify(snapshot).length > 64 * 1024) throw new Error("snapshot-too-large");
-    this.snapshots.set(this.hostServerKey(hostId, snapshot.serverId), clone(snapshot));
+    const snapshotKey = this.hostServerKey(hostId, snapshot.serverId);
+    if (!this.snapshots.has(snapshotKey)) {
+      this.pruneExpiredRecords();
+      this.requireCapacity(this.snapshots.size, this.limits.maxSnapshots);
+    }
+    this.snapshots.set(snapshotKey, clone(snapshot));
   }
 
   snapshot(hostId: string, serverId: string): PublicServerSnapshot | undefined {
@@ -441,6 +545,10 @@ export class MemoryRelayStore implements RelayStore {
     // A timeout is uncertain. Never replace a final result with a retry's
     // `running` marker.
     if (existing && existing.state !== "running" && record.state === "running") return clone(existing);
+    if (!existing) {
+      this.pruneExpiredRecords();
+      this.requireCapacity(this.operations.size, this.limits.maxOperations);
+    }
     if (audit && record.state !== "running") this.appendAudit(audit);
     const stored = { ...record, contentHash: record.contentHash ?? existing?.contentHash };
     this.operations.set(operationKey, clone(stored));

@@ -43,6 +43,7 @@ const MIN_INVITE_SECRET_BYTES: usize = 32;
 const INVITE_LIFETIME_MINUTES: i64 = 10;
 const APPROVED_SESSION_LIFETIME_HOURS: i64 = 12;
 const MAX_BRIDGE_MESSAGE_BYTES: usize = 256 * 1024;
+const MAX_PENDING_BRIDGE_EVENTS: usize = 512;
 
 static RUSTLS_CRYPTO_PROVIDER: OnceLock<()> = OnceLock::new();
 
@@ -1804,7 +1805,15 @@ impl HostConnectionManager {
         inner.events.drain(..).collect()
     }
 
-    fn push_event(inner: &Arc<Mutex<HostConnectionInner>>, server_id: &str, payload: Value) {
+    /// Queue an event for the UI. A full queue is a fail-closed condition:
+    /// returning false makes the WebSocket reader terminate, so a host
+    /// operation can only become uncertain/disconnected and is never reported
+    /// as successfully handled after an event was dropped.
+    fn push_event(
+        inner: &Arc<Mutex<HostConnectionInner>>,
+        server_id: &str,
+        payload: Value,
+    ) -> bool {
         let event_type = payload
             .get("type")
             .and_then(Value::as_str)
@@ -1814,17 +1823,24 @@ impl HostConnectionManager {
             event_type.as_str(),
             "host.ready" | "host.ping" | "host.pong"
         ) {
-            return;
+            return true;
         }
-        if let Ok(serialized) = serde_json::to_vec(&payload) {
-            if serialized.len() <= MAX_BRIDGE_MESSAGE_BYTES {
-                inner.lock().unwrap().events.push_back(CoManagementEvent {
-                    server_id: server_id.to_string(),
-                    event_type,
-                    payload,
-                });
-            }
+        let Ok(serialized) = serde_json::to_vec(&payload) else {
+            return false;
+        };
+        if serialized.len() > MAX_BRIDGE_MESSAGE_BYTES {
+            return false;
         }
+        let mut guard = inner.lock().unwrap();
+        if guard.events.len() >= MAX_PENDING_BRIDGE_EVENTS {
+            return false;
+        }
+        guard.events.push_back(CoManagementEvent {
+            server_id: server_id.to_string(),
+            event_type,
+            payload,
+        });
+        true
     }
 }
 
@@ -1888,7 +1904,9 @@ async fn run_connection(
                                         }
                                     }
                                 }
-                                HostConnectionManager::push_event(&inner, &server_id, payload);
+                                if !HostConnectionManager::push_event(&inner, &server_id, payload) {
+                                    break;
+                                }
                             }
                         }
                     }
@@ -1911,7 +1929,9 @@ async fn run_connection(
                                     }
                                 }
                             }
-                            HostConnectionManager::push_event(&inner, &server_id, payload);
+                            if !HostConnectionManager::push_event(&inner, &server_id, payload) {
+                                break;
+                            }
                         }
                     }
                     Some(Ok(Message::Ping(value))) => {
@@ -3290,9 +3310,13 @@ pub fn record_local_change(
 
 #[cfg(test)]
 mod tests {
-    use std::{collections::HashMap, time::Duration};
+    use std::{
+        collections::HashMap,
+        sync::{Arc, Mutex},
+        time::Duration,
+    };
 
-    use serde_json::Value;
+    use serde_json::{Value, json};
 
     use super::{
         CoManagementApplyInput, CoManagementApplyResult, CoManagementStore, abort_journaled_change,
@@ -3347,6 +3371,39 @@ mod tests {
         assert!(validate_relay_endpoint("https://relay.example.test/base").is_ok());
         assert!(validate_relay_endpoint("http://relay.example.test").is_err());
         assert!(validate_relay_endpoint("https://user:pass@relay.example.test").is_err());
+    }
+
+    #[test]
+    fn bridge_event_queue_fails_closed_at_bound() {
+        let inner = Arc::new(Mutex::new(super::HostConnectionInner::default()));
+        for index in 0..super::MAX_PENDING_BRIDGE_EVENTS {
+            assert!(super::HostConnectionManager::push_event(
+                &inner,
+                "server-test",
+                json!({
+                    "type": "settings.get",
+                    "requestId": format!("request-{index}"),
+                    "serverId": "server-test",
+                }),
+            ));
+        }
+        assert_eq!(
+            inner.lock().unwrap().events.len(),
+            super::MAX_PENDING_BRIDGE_EVENTS
+        );
+        assert!(!super::HostConnectionManager::push_event(
+            &inner,
+            "server-test",
+            json!({
+                "type": "settings.get",
+                "requestId": "request-overflow",
+                "serverId": "server-test",
+            }),
+        ));
+        assert_eq!(
+            inner.lock().unwrap().events.len(),
+            super::MAX_PENDING_BRIDGE_EVENTS
+        );
     }
 
     #[tokio::test]
