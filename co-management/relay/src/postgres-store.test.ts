@@ -125,6 +125,17 @@ test("PostgresRelayStore scopes idempotency and encrypts persisted operation res
   await store.saveOperation(operation, audit);
   const auditCount = await database.query<{ count: string }>("SELECT count(*)::text AS count FROM co_management_audit");
   assert.equal(auditCount.rows[0].count, "1");
+  await store.appendAudit({
+    hostId: operation.hostId,
+    serverId: operation.serverId,
+    actorId: "host-test",
+    actorDisplayName: "Host",
+    action: "participant.approved",
+    changedKeys: [],
+    result: "success",
+  });
+  const nullRequestAudit = await database.query<{ count: string }>("SELECT count(*)::text AS count FROM co_management_audit WHERE request_id IS NULL");
+  assert.equal(nullRequestAudit.rows[0].count, "1");
 });
 
 test("PostgresRelayMaintenance retains the newest audit rows per server and only deletes expired rate limits", async (t) => {

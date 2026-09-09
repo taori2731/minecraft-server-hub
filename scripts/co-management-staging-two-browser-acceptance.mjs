@@ -297,22 +297,23 @@ async function joinAndApprove(page, baseUrl, secret, displayName, serverHeading,
     if (await dashboardHeading.isVisible().catch(() => false)) return;
     throw new Error(`approval-state-not-rendered-${displayName}`);
   }
-  for (let attempt = 0; attempt < 6; attempt += 1) {
-    const refresh = page.getByRole("button", { name: "承認状態を確認" });
-    try {
-      await refresh.waitFor({ state: "visible", timeout: 5_000 });
-      await refresh.click();
-    } catch {
-      if (await dashboardHeading.isVisible().catch(() => false)) return;
-      throw new Error(`approval-control-not-rendered-${displayName}`);
+  const refresh = page.getByRole("button", { name: "承認状態を確認" });
+  const deadline = Date.now() + 30_000;
+  while (Date.now() < deadline) {
+    if (await dashboardHeading.isVisible().catch(() => false)) return;
+    if (await refresh.isVisible().catch(() => false)) {
+      try {
+        await refresh.click();
+      } catch {
+        if (await dashboardHeading.isVisible().catch(() => false)) return;
+      }
     }
-    try {
-      await dashboardHeading.waitFor({ state: "visible", timeout: 3_000 });
-      return;
-    } catch {
-      await page.waitForTimeout(500);
-    }
+    // App changes to a loading screen briefly after the session becomes
+    // approved while summary/settings/audit are fetched. Do not classify that
+    // intentional transition as a missing approval control.
+    await page.waitForTimeout(250);
   }
+  if (await dashboardHeading.isVisible().catch(() => false)) return;
   throw new Error(`approval-timeout-${displayName}`);
 }
 
