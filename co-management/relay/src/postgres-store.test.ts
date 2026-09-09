@@ -67,6 +67,30 @@ class FaultInjectingPool implements SqlPool {
   }
 }
 
+class DeleteDenyingPool implements SqlPool {
+  constructor(private readonly base: SqlPool) {}
+
+  private rejectDelete(sql: string): void {
+    if (/^\s*DELETE\b/iu.test(sql)) throw new Error("relay-role-delete-denied");
+  }
+
+  query<T extends QueryResultRow = QueryResultRow>(sql: string, values?: unknown[]): Promise<{ rows: T[]; rowCount: number | null }> {
+    this.rejectDelete(sql);
+    return this.base.query<T>(sql, values);
+  }
+
+  async connect(): Promise<SqlConnection> {
+    const client = await this.base.connect();
+    return {
+      query: <T extends QueryResultRow = QueryResultRow>(sql: string, values?: unknown[]) => {
+        this.rejectDelete(sql);
+        return client.query<T>(sql, values);
+      },
+      release: client.release?.bind(client),
+    };
+  }
+}
+
 async function fixture(clock: () => Date = () => new Date("2026-09-08T00:00:00.000Z")) {
   const database = new PGlite();
   const migrationDirectory = defaultMigrationsDirectory();
@@ -231,6 +255,50 @@ test("PostgresRelayStore rolls back every transaction step on injected failure",
   assert.equal(auditRows.rows[0].count, "0");
 });
 
+test("PostgresRelayStore revokes sessions and snapshots without relay-role DELETE permission", async (t) => {
+  const clock = () => new Date("2026-09-08T00:00:00.000Z");
+  const { database, pool, keyring } = await fixture(clock);
+  t.after(async () => database.close());
+  const store = new PostgresRelayStore(new DeleteDenyingPool(pool), keyring, clock);
+  const token = "host-token-" + "a".repeat(40);
+  const firstSecret = "invite-secret-" + "b".repeat(40);
+  await store.registerHost("host-test", token);
+  await store.bindHostServer("host-test", "server-test");
+  await store.registerInvite({
+    inviteId: "invite-close", serverId: "server-test", hostId: "host-test",
+    secretHash: hashRelaySecret(firstSecret), role: "viewer", expiresAt: "2026-09-08T00:10:00.000Z",
+  });
+  const first = await store.redeemInvite(firstSecret, "Close test");
+  await store.closeSession(first.session.sessionId);
+  assert.equal(await store.session(first.session.sessionId), undefined);
+  assert.equal(await store.verifyCsrfForSession(first.session.sessionId, first.session.csrfToken), false);
+
+  await store.setSnapshot("host-test", {
+    serverId: "server-test", serverName: "Test", gameKind: "java", state: "stopped",
+    playerCount: 0, maxPlayers: 24, fetchedAt: "2026-09-08T00:00:00.000Z", revision: 2, capabilities: [],
+  });
+  assert.equal((await store.snapshot("host-test", "server-test"))?.maxPlayers, 24);
+  await store.disconnectHost("host-test");
+  assert.equal(await store.snapshot("host-test", "server-test"), undefined);
+
+  const retainedSession = await database.query<{ revoked_at: string | null }>(
+    "SELECT revoked_at::text FROM co_management_sessions WHERE session_id = $1",
+    [first.session.sessionId],
+  );
+  assert.ok(retainedSession.rows[0].revoked_at);
+  const retainedSnapshot = await database.query<{ invalidated_at: string | null }>(
+    "SELECT invalidated_at::text FROM co_management_snapshots WHERE host_id = 'host-test' AND server_id = 'server-test'",
+  );
+  assert.ok(retainedSnapshot.rows[0].invalidated_at);
+  assert.equal((await store.participant("host-test", first.session.participantId))?.state, "revoked");
+
+  await store.setSnapshot("host-test", {
+    serverId: "server-test", serverName: "Reconnected", gameKind: "java", state: "running",
+    playerCount: 1, maxPlayers: 24, fetchedAt: "2026-09-08T00:01:00.000Z", revision: 3, capabilities: [],
+  });
+  assert.equal((await store.snapshot("host-test", "server-test"))?.revision, 3);
+});
+
 test("PostgresRelayMaintenance applies audit expiry, newest-row caps, and rate-limit expiry", async (t) => {
   const { database, pool } = await fixture(() => new Date("2026-09-08T00:00:00.000Z"));
   t.after(async () => database.close());
@@ -304,15 +372,19 @@ test("PostgresRelayMaintenance removes expired lifecycle rows while retaining ac
             TIMESTAMPTZ '2026-09-08T00:00:00Z', TIMESTAMPTZ '2026-09-08T00:00:00Z', NULL);
     INSERT INTO co_management_sessions
       (session_id, host_id, participant_id, csrf_token_hash, join_code_ciphertext, key_id,
-       absolute_expires_at, idle_expires_at, created_at, last_seen_at, last_interaction_at, last_polled_at)
+       absolute_expires_at, idle_expires_at, created_at, last_seen_at, last_interaction_at, last_polled_at, revoked_at)
     VALUES ('session-old', 'host-old', 'participant-old', repeat('f', 64), decode('00', 'hex'), 'test-v1',
             TIMESTAMPTZ '2025-01-02T00:00:00Z', TIMESTAMPTZ '2025-01-02T00:00:00Z',
             TIMESTAMPTZ '2025-01-01T00:00:00Z', TIMESTAMPTZ '2025-01-01T00:01:00Z',
-            TIMESTAMPTZ '2025-01-01T00:01:00Z', NULL),
+            TIMESTAMPTZ '2025-01-01T00:01:00Z', NULL, NULL),
            ('session-active', 'host-active', 'participant-active', repeat('0', 64), decode('00', 'hex'), 'test-v1',
             TIMESTAMPTZ '2026-09-10T00:00:00Z', TIMESTAMPTZ '2026-09-09T00:00:00Z',
             TIMESTAMPTZ '2026-09-07T00:00:00Z', TIMESTAMPTZ '2026-09-08T00:00:00Z',
-            TIMESTAMPTZ '2026-09-08T00:00:00Z', NULL);
+            TIMESTAMPTZ '2026-09-08T00:00:00Z', NULL, NULL),
+           ('session-revoked', 'host-active', 'participant-active', repeat('1', 64), decode('00', 'hex'), 'test-v1',
+            TIMESTAMPTZ '2026-09-10T00:00:00Z', TIMESTAMPTZ '2026-09-09T00:00:00Z',
+            TIMESTAMPTZ '2026-01-01T00:00:00Z', TIMESTAMPTZ '2026-01-01T00:00:00Z',
+            TIMESTAMPTZ '2026-01-01T00:00:00Z', NULL, TIMESTAMPTZ '2026-01-01T00:00:00Z');
     INSERT INTO co_management_operations
       (host_id, server_id, participant_id, request_id, state, content_hash, result_ciphertext, key_id,
        error_code, created_at, updated_at)
@@ -320,19 +392,21 @@ test("PostgresRelayMaintenance removes expired lifecycle rows while retaining ac
             NULL, TIMESTAMPTZ '2025-01-01T00:00:00Z', TIMESTAMPTZ '2025-01-01T00:03:00Z'),
            ('host-active', 'server-active', 'participant-active', 'operation-running', 'running', NULL, NULL, NULL,
             NULL, TIMESTAMPTZ '2026-09-08T00:00:00Z', TIMESTAMPTZ '2026-09-08T00:00:00Z');
-    INSERT INTO co_management_snapshots (host_id, server_id, snapshot, updated_at)
-    VALUES ('host-old', 'server-old', '{}'::jsonb, TIMESTAMPTZ '2025-01-01T00:00:00Z');
+    INSERT INTO co_management_snapshots (host_id, server_id, snapshot, updated_at, invalidated_at)
+    VALUES ('host-old', 'server-old', '{}'::jsonb, TIMESTAMPTZ '2025-01-01T00:00:00Z', NULL),
+           ('host-active', 'server-active', '{}'::jsonb, TIMESTAMPTZ '2026-01-01T00:00:00Z',
+            TIMESTAMPTZ '2026-01-01T00:00:00Z');
   `);
 
   const maintenance = new PostgresRelayMaintenance(pool, () => new Date("2026-09-08T00:00:00.000Z"));
   assert.deepEqual(await maintenance.run(), {
     auditRowsDeleted: 0,
     rateLimitRowsDeleted: 0,
-    sessionRowsDeleted: 1,
+    sessionRowsDeleted: 2,
     participantRowsDeleted: 1,
     inviteRowsDeleted: 1,
     operationRowsDeleted: 1,
-    snapshotRowsDeleted: 1,
+    snapshotRowsDeleted: 2,
     hostServerRowsDeleted: 1,
     hostRowsDeleted: 1,
   });

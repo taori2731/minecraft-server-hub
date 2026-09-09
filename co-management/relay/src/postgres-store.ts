@@ -395,8 +395,9 @@ export class PostgresRelayStore implements RelayStore {
               sn.snapshot
        FROM co_management_sessions s
        JOIN co_management_participants p ON p.host_id = s.host_id AND p.participant_id = s.participant_id
-       LEFT JOIN co_management_snapshots sn ON sn.host_id = p.host_id AND sn.server_id = p.server_id
-       WHERE s.session_id = $1`,
+       LEFT JOIN co_management_snapshots sn
+         ON sn.host_id = p.host_id AND sn.server_id = p.server_id AND sn.invalidated_at IS NULL
+       WHERE s.session_id = $1 AND s.revoked_at IS NULL`,
       [sessionId],
     );
     const row = result.rows[0];
@@ -469,7 +470,7 @@ export class PostgresRelayStore implements RelayStore {
     return this.run(async () => {
       const result = await this.pool.query<{ csrf_token_hash: string; absolute_expires_at: string | Date; last_interaction_at: string | Date }>(
         `SELECT csrf_token_hash, absolute_expires_at, last_interaction_at
-         FROM co_management_sessions WHERE session_id = $1`,
+         FROM co_management_sessions WHERE session_id = $1 AND revoked_at IS NULL`,
         [sessionId],
       );
       const row = result.rows[0];
@@ -541,10 +542,10 @@ export class PostgresRelayStore implements RelayStore {
     await this.run(async () => {
       if (JSON.stringify(snapshot).length > 64 * 1024) throw new Error("snapshot-too-large");
       await this.pool.query(
-        `INSERT INTO co_management_snapshots (host_id, server_id, snapshot, updated_at)
-         VALUES ($1, $2, $3::jsonb, $4)
+        `INSERT INTO co_management_snapshots (host_id, server_id, snapshot, updated_at, invalidated_at)
+         VALUES ($1, $2, $3::jsonb, $4, NULL)
          ON CONFLICT (host_id, server_id)
-         DO UPDATE SET snapshot = EXCLUDED.snapshot, updated_at = EXCLUDED.updated_at`,
+         DO UPDATE SET snapshot = EXCLUDED.snapshot, updated_at = EXCLUDED.updated_at, invalidated_at = NULL`,
         [hostId, snapshot.serverId, JSON.stringify(snapshot), this.now()],
       );
     });
@@ -553,7 +554,7 @@ export class PostgresRelayStore implements RelayStore {
   async snapshot(hostId: string, serverId: string): Promise<PublicServerSnapshot | undefined> {
     return this.run(async () => {
       const result = await this.pool.query<{ snapshot: PublicServerSnapshot }>(
-        "SELECT snapshot FROM co_management_snapshots WHERE host_id = $1 AND server_id = $2",
+        "SELECT snapshot FROM co_management_snapshots WHERE host_id = $1 AND server_id = $2 AND invalidated_at IS NULL",
         [hostId, serverId],
       );
       return result.rows[0]?.snapshot ? structuredClone(result.rows[0].snapshot) : undefined;
@@ -640,7 +641,10 @@ export class PostgresRelayStore implements RelayStore {
   async disconnectHost(hostId: string): Promise<void> {
     await this.run(async () => this.transaction(async (client) => {
       const timestamp = this.now();
-      await client.query("DELETE FROM co_management_snapshots WHERE host_id = $1", [hostId]);
+      await client.query(
+        "UPDATE co_management_snapshots SET invalidated_at = COALESCE(invalidated_at, $2) WHERE host_id = $1",
+        [hostId, timestamp],
+      );
       await client.query("UPDATE co_management_participants SET state = 'revoked', last_seen_at = $2 WHERE host_id = $1", [hostId, timestamp]);
       await client.query(
         "UPDATE co_management_invites SET revoked_at = $2 WHERE host_id = $1 AND used_at IS NULL AND revoked_at IS NULL",
@@ -651,7 +655,10 @@ export class PostgresRelayStore implements RelayStore {
 
   async closeSession(sessionId: string): Promise<void> {
     await this.run(async () => {
-      await this.pool.query("DELETE FROM co_management_sessions WHERE session_id = $1", [sessionId]);
+      await this.pool.query(
+        "UPDATE co_management_sessions SET revoked_at = COALESCE(revoked_at, $2) WHERE session_id = $1",
+        [sessionId, this.now()],
+      );
     });
   }
 }
@@ -700,7 +707,8 @@ export class PostgresRelayMaintenance {
         );
         const sessionResult = await client.query(
           `DELETE FROM co_management_sessions session
-           WHERE session.absolute_expires_at <= $1
+           WHERE session.revoked_at <= $2
+              OR session.absolute_expires_at <= $1
               OR session.idle_expires_at <= $1
               OR EXISTS (
                 SELECT 1 FROM co_management_participants participant
@@ -708,7 +716,7 @@ export class PostgresRelayMaintenance {
                   AND participant.participant_id = session.participant_id
                   AND participant.state = 'revoked'
               )`,
-          [now.toISOString()],
+          [now.toISOString(), retentionCutoff],
         );
         const operationResult = await client.query(
           `DELETE FROM co_management_operations
@@ -737,7 +745,8 @@ export class PostgresRelayMaintenance {
         );
         const snapshotResult = await client.query(
           `DELETE FROM co_management_snapshots snapshot
-           WHERE EXISTS (
+           WHERE snapshot.invalidated_at <= $1
+              OR EXISTS (
              SELECT 1 FROM co_management_hosts host
              WHERE host.host_id = snapshot.host_id AND host.last_seen_at <= $1
            )`,

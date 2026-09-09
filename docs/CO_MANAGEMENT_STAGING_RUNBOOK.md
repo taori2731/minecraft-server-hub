@@ -103,7 +103,7 @@ npm run test:co-management:staging
 
 ### PostgreSQL保持保守
 
-リレーアプリケーションのDBロールには、通常の要求処理に必要なテーブルの読取・追加・更新だけを与え、DELETE権限は与えない。別の保守ロールを`MSH_CO_MANAGEMENT_MAINTENANCE_DATABASE_URL`へ設定し、期限切れセッション・参加者・招待・終端操作・snapshot・孤立したホスト結合/ホスト、期限切れレート制限、保持期限またはスコープ上限を超えた監査メタデータを定期的に削除する。監査の90日期限と最新10,000件上限は独立して適用する。
+リレーアプリケーションのDBロールには、通常の要求処理に必要なテーブルの読取・追加・更新だけを与え、DELETE権限は与えない。ログアウトしたsessionは`revoked_at`、切断したホストのsnapshotは`invalidated_at`を通常ロールで更新して即時に参照対象外とし、物理削除は行わない。別の保守ロールを`MSH_CO_MANAGEMENT_MAINTENANCE_DATABASE_URL`へ設定し、保持期限を過ぎた失効session・無効snapshot、期限切れセッション・参加者・招待・終端操作・孤立したホスト結合/ホスト、期限切れレート制限、保持期限またはスコープ上限を超えた監査メタデータを定期的に削除する。監査の90日期限と最新10,000件上限は独立して適用する。
 
 Neon等の管理PostgreSQLでは、実際のロール名を決めたうえで、リレー用接続ユーザーから対象表の`DELETE`を剥奪し、保守用接続ユーザーへ`co_management_sessions`、`co_management_participants`、`co_management_invites`、`co_management_operations`、`co_management_snapshots`、`co_management_host_servers`、`co_management_hosts`、`co_management_audit`、`co_management_rate_limits`の`DELETE`と、maintenance SQLに必要な読取権限だけを付与する。ロール作成・権限変更はDB所有者の管理画面またはSQLコンソールで行い、アプリ起動時には実行しない。
 
