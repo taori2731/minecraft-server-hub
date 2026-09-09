@@ -48,6 +48,10 @@ Rustバックエンドは `cd src-tauri; cargo test`、紹介サイトは `cd we
 
 このプロジェクトはMojang Studios、Microsoft、Pocketpair、Valveの公式製品ではなく、承認・提携を受けたものではありません。公開前に仮称を独自名へ変更します。
 
+## Code signing policy
+
+Free code signing provided by SignPath.io, certificate by SignPath Foundation (application pending). See the [Code signing policy](docs/CODE_SIGNING_POLICY.md). Until a signed release is published, installers may remain unsigned and are for local QA only.
+
 ## License
 
 Minecraft Server Hub is licensed under the Apache License 2.0. See [LICENSE](LICENSE).
