@@ -393,6 +393,32 @@ test("relay bounds pre-auth WebSocket connections and releases the budget", asyn
   await openSocket(third);
 });
 
+test("relay rate-limits WebSocket upgrade attempts per source", async (t) => {
+  const relay = createRelayServer({ maxWebSocketUpgradeAttempts: 1, maxPreAuthWebSocketConnections: 8 });
+  t.after(async () => relay.close());
+  await relay.start(0, "127.0.0.1");
+  const address = relay.app.server.address() as AddressInfo;
+  const first = new WebSocket(`ws://127.0.0.1:${address.port}/ws/host`, { headers: { Authorization: `Bearer ${token}` } });
+  t.after(() => first.terminate());
+  await openSocket(first);
+  await new Promise<void>((resolve) => {
+    first.once("close", () => resolve());
+    first.terminate();
+  });
+
+  const second = new WebSocket(`ws://127.0.0.1:${address.port}/ws/host`, { headers: { Authorization: `Bearer ${token}` } });
+  t.after(() => second.terminate());
+  const statusCode = await new Promise<number>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error("websocket-rate-limit-timeout")), 1_000);
+    second.once("unexpected-response", (_request, response) => {
+      clearTimeout(timer);
+      resolve(response.statusCode ?? 0);
+    });
+    second.once("error", () => undefined);
+  });
+  assert.equal(statusCode, 429);
+});
+
 test("relay terminates a WebSocket when its bounded inbound queue overflows", async (t) => {
   const baseStore = new MemoryRelayStore();
   const store = new Proxy(baseStore, {

@@ -39,6 +39,7 @@ export const MAX_PENDING_HOST_REQUESTS = 1_024;
 export const DEFAULT_MEMORY_RATE_LIMIT_ENTRIES = 10_000;
 export const MAX_ACTIVE_WEB_SOCKETS = 512;
 export const MAX_PREAUTH_WEB_SOCKETS = 128;
+export const MAX_WEBSOCKET_UPGRADE_ATTEMPTS = 60;
 export const MAX_INBOUND_WEB_SOCKET_MESSAGES = 64;
 export const MAX_INBOUND_WEB_SOCKET_BYTES = 2 * 1024 * 1024;
 export const MAX_QUEUED_HOST_EVENTS = 4_096;
@@ -111,6 +112,7 @@ export interface RelayServerOptions {
   maxPendingHostRequests?: number;
   maxWebSocketConnections?: number;
   maxPreAuthWebSocketConnections?: number;
+  maxWebSocketUpgradeAttempts?: number;
   maxInboundWebSocketMessages?: number;
   maxInboundWebSocketBytes?: number;
   maxQueuedHostEvents?: number;
@@ -511,6 +513,7 @@ export function createRelayServer(options: RelayServerOptions = {}): RelayServer
   const maxPendingHostRequests = options.maxPendingHostRequests ?? MAX_PENDING_HOST_REQUESTS;
   const maxWebSocketConnections = options.maxWebSocketConnections ?? MAX_ACTIVE_WEB_SOCKETS;
   const maxPreAuthWebSocketConnections = options.maxPreAuthWebSocketConnections ?? MAX_PREAUTH_WEB_SOCKETS;
+  const maxWebSocketUpgradeAttempts = options.maxWebSocketUpgradeAttempts ?? MAX_WEBSOCKET_UPGRADE_ATTEMPTS;
   const maxInboundWebSocketMessages = options.maxInboundWebSocketMessages ?? MAX_INBOUND_WEB_SOCKET_MESSAGES;
   const maxInboundWebSocketBytes = options.maxInboundWebSocketBytes ?? MAX_INBOUND_WEB_SOCKET_BYTES;
   const maxQueuedHostEvents = options.maxQueuedHostEvents ?? MAX_QUEUED_HOST_EVENTS;
@@ -519,6 +522,7 @@ export function createRelayServer(options: RelayServerOptions = {}): RelayServer
   if (!validPositiveLimit(maxPendingHostRequests)
     || !validPositiveLimit(maxWebSocketConnections)
     || !validPositiveLimit(maxPreAuthWebSocketConnections)
+    || !validPositiveLimit(maxWebSocketUpgradeAttempts)
     || !validPositiveLimit(maxInboundWebSocketMessages)
     || !validPositiveLimit(maxInboundWebSocketBytes)
     || maxInboundWebSocketBytes < MAX_WS_BYTES
@@ -537,6 +541,10 @@ export function createRelayServer(options: RelayServerOptions = {}): RelayServer
   const connectedSockets = new Set<WebSocket>();
   const preAuthSockets = new Set<WebSocket>();
   const pendingUpgradeSockets = new Set<Socket>();
+  // Keep upgrade abuse local to this relay process. The shared HTTP limiter is
+  // PostgreSQL-backed in production, but using it before a WebSocket exists
+  // would turn an unauthenticated handshake flood into more DB work.
+  const websocketUpgradeRateLimiter = new MemoryRateLimiter();
   const wss = new WebSocketServer({
     noServer: true,
     clientTracking: false,
@@ -1145,8 +1153,19 @@ export function createRelayServer(options: RelayServerOptions = {}): RelayServer
   const rejectUpgrade = (socket: Socket, status: number, reason: string): void => {
     if (socket.destroyed) return;
     const body = `${reason}\n`;
-    socket.write(`HTTP/1.1 ${status} Service Unavailable\r\nConnection: close\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: ${Buffer.byteLength(body, "utf8")}\r\n\r\n${body}`);
+    const statusText = status === 429 ? "Too Many Requests" : "Service Unavailable";
+    socket.write(`HTTP/1.1 ${status} ${statusText}\r\nConnection: close\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: ${Buffer.byteLength(body, "utf8")}\r\n\r\n${body}`);
     socket.destroy();
+  };
+
+  const upgradeClientIdentifier = (request: IncomingMessage, socket: Socket): string => {
+    if (options.trustProxy) {
+      const forwarded = request.headers["x-forwarded-for"];
+      const first = Array.isArray(forwarded) ? forwarded[0] : forwarded;
+      const client = first?.split(",", 1)[0]?.trim();
+      if (client) return client;
+    }
+    return socket.remoteAddress ?? "unknown";
   };
 
   const upgradeHandler = (request: import("node:http").IncomingMessage, socket: Socket, head: Buffer) => {
@@ -1176,15 +1195,31 @@ export function createRelayServer(options: RelayServerOptions = {}): RelayServer
     };
     socket.once("close", releaseUpgrade);
     socket.once("error", releaseUpgrade);
-    try {
-      wss.handleUpgrade(request, socket, head, (ws: WebSocket) => {
+    void (async () => {
+      try {
+        const allowed = await websocketUpgradeRateLimiter.consume(
+          upgradeClientIdentifier(request, socket),
+          maxWebSocketUpgradeAttempts,
+          60_000,
+        );
+        if (!allowed) {
+          releaseUpgrade();
+          rejectUpgrade(socket, 429, "websocket-rate-limit");
+          return;
+        }
+        if (socket.destroyed) {
+          releaseUpgrade();
+          return;
+        }
+        wss.handleUpgrade(request, socket, head, (ws: WebSocket) => {
+          releaseUpgrade();
+          wss.emit("connection", ws, request, token);
+        });
+      } catch {
         releaseUpgrade();
-        wss.emit("connection", ws, request, token);
-      });
-    } catch {
-      releaseUpgrade();
-      socket.destroy();
-    }
+        socket.destroy();
+      }
+    })();
   };
   app.server.on("upgrade", upgradeHandler);
 
@@ -1506,6 +1541,7 @@ async function main(): Promise<void> {
     secureCookies: process.env.NODE_ENV === "production",
     trustProxy: process.env.MSH_CO_MANAGEMENT_TRUST_PROXY === "1",
     hstsMaxAgeSeconds: Number(process.env.MSH_CO_MANAGEMENT_HSTS_MAX_AGE ?? 0),
+    maxWebSocketUpgradeAttempts: Number(process.env.MSH_CO_MANAGEMENT_MAX_WEBSOCKET_UPGRADE_ATTEMPTS ?? MAX_WEBSOCKET_UPGRADE_ATTEMPTS),
     readinessCheck: pool ? async () => { await pool!.query("SELECT 1"); } : undefined,
     onClose: pool ? async () => { await pool!.end(); } : undefined,
   });
