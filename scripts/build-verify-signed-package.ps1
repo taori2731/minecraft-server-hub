@@ -7,6 +7,10 @@ param(
     [string]$InstallerPath,
 
     [Parameter(ParameterSetName = "Build")]
+    [Parameter(ParameterSetName = "Verify")]
+    [switch]$RequireAuthenticode,
+
+    [Parameter(ParameterSetName = "Build")]
     [string]$TargetDir,
     [string]$OutputPath
 )
@@ -171,6 +175,10 @@ try {
         authenticodeStatus = $authenticodeStatus
         authenticodeSubject = $authenticodeSubject
         authenticodeError = $authenticodeError
+        authenticodeRequired = [bool]$RequireAuthenticode
+    }
+    if ($RequireAuthenticode -and $authenticodeStatus -ne "Valid") {
+        throw "Authenticode signing is required, but the installer status is '$authenticodeStatus'."
     }
     $json = $report | ConvertTo-Json -Depth 5
     if (-not [string]::IsNullOrWhiteSpace($OutputPath)) {

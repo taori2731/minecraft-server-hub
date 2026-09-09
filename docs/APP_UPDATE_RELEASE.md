@@ -65,6 +65,14 @@ npm run build:verify:signed -- `
 
 この確認で合格するのは、NSIS生成物に隣接するTauri更新署名とアプリへ埋め込んだ公開鍵の一致です。`Get-AuthenticodeSignature` の結果も記録しますが、`NotSigned` はWindows Authenticode署名が無い状態であり、一般配布の信頼済み発行元を意味しません。公開前には別途、Windowsコード署名証明書と安全な署名環境でAuthenticode署名を付け、クリーン環境のインストール・アンインストール・再インストール・更新を確認します。
 
+公開ゲートでは`-RequireAuthenticode`を付け、Windows署名状態が`Valid`でない生成物を失敗扱いにします。証明書や署名ツールのない開発環境ではこのオプションを付けずQA証跡だけを作成し、`NotSigned`のまま公開へ進めません。
+
+```powershell
+npm run build:verify:signed -- `
+  -InstallerPath "$env:TEMP\msh-tauri-signed-0.3.8\release\bundle\nsis\Minecraft Server Hub_0.3.8_x64-setup.exe" `
+  -RequireAuthenticode
+```
+
 署名秘密鍵が表示・漏えいした可能性がある場合は、その鍵で公開や本番更新を続けません。新しい鍵を安全な環境で生成し、`src-tauri/updater-public.key`、`tauri.conf.json`、更新マニフェスト、配布経路を同時に切り替えます。公開鍵だけを差し替えると、旧公開鍵を埋め込んだ既存版から新鍵の更新を受けられなくなるため、切替版の配布計画と旧版の扱いを先に決めます。
 
 ## 失敗時の扱い
