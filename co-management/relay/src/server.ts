@@ -45,6 +45,7 @@ export const MAX_INBOUND_WEB_SOCKET_BYTES = 2 * 1024 * 1024;
 export const MAX_QUEUED_HOST_EVENTS = 4_096;
 export const MAX_QUEUED_HOST_EVENT_BYTES = 8 * 1024 * 1024;
 export const MAX_QUEUED_HOST_EVENT_HOSTS = 1_024;
+export const MAX_HOST_EVENT_BUFFERED_BYTES = 8 * 1024 * 1024;
 const MAX_QUEUED_HOST_EVENTS_PER_HOST = 100;
 const QUEUED_HOST_EVENT_TTL_MS = 10 * 60_000;
 const SESSION_COOKIE = "msh_co_session";
@@ -118,6 +119,7 @@ export interface RelayServerOptions {
   maxQueuedHostEvents?: number;
   maxQueuedHostEventBytes?: number;
   maxQueuedHostEventHosts?: number;
+  maxHostEventBufferedBytes?: number;
 }
 
 export interface RelayServer {
@@ -125,6 +127,20 @@ export interface RelayServer {
   store: RelayStore;
   start(port?: number, host?: string): Promise<string>;
   close(): Promise<void>;
+}
+
+export function hasWebSocketSendCapacity(
+  socket: Pick<WebSocket, "bufferedAmount">,
+  bytes: number,
+  limit: number,
+): boolean {
+  return Number.isSafeInteger(bytes)
+    && bytes >= 0
+    && Number.isSafeInteger(limit)
+    && limit >= bytes
+    && Number.isSafeInteger(socket.bufferedAmount)
+    && socket.bufferedAmount >= 0
+    && socket.bufferedAmount <= limit - bytes;
 }
 
 export function assertRelayRuntimeConfiguration(env: NodeJS.ProcessEnv = process.env): void {
@@ -519,6 +535,7 @@ export function createRelayServer(options: RelayServerOptions = {}): RelayServer
   const maxQueuedHostEvents = options.maxQueuedHostEvents ?? MAX_QUEUED_HOST_EVENTS;
   const maxQueuedHostEventBytes = options.maxQueuedHostEventBytes ?? MAX_QUEUED_HOST_EVENT_BYTES;
   const maxQueuedHostEventHosts = options.maxQueuedHostEventHosts ?? MAX_QUEUED_HOST_EVENT_HOSTS;
+  const maxHostEventBufferedBytes = options.maxHostEventBufferedBytes ?? MAX_HOST_EVENT_BUFFERED_BYTES;
   if (!validPositiveLimit(maxPendingHostRequests)
     || !validPositiveLimit(maxWebSocketConnections)
     || !validPositiveLimit(maxPreAuthWebSocketConnections)
@@ -530,6 +547,9 @@ export function createRelayServer(options: RelayServerOptions = {}): RelayServer
     || !validPositiveLimit(maxQueuedHostEventBytes)
     || maxQueuedHostEventBytes < MAX_WS_BYTES
     || !validPositiveLimit(maxQueuedHostEventHosts)) {
+    throw new Error("invalid-memory-limits");
+  }
+  if (!validPositiveLimit(maxHostEventBufferedBytes) || maxHostEventBufferedBytes < MAX_WS_BYTES) {
     throw new Error("invalid-memory-limits");
   }
   const app = fastify({ logger: false, bodyLimit: MAX_BODY_BYTES, trustProxy: options.trustProxy ?? false });
@@ -579,7 +599,10 @@ export function createRelayServer(options: RelayServerOptions = {}): RelayServer
   });
 
   const rateLimit = async (request: FastifyRequest, reply: FastifyReply): Promise<boolean> => {
-    const address = request.ip || request.raw.socket.remoteAddress || "inject";
+    // Use the actual TCP peer for the limiter. Fastify's request.ip can be
+    // derived from X-Forwarded-For when trustProxy is enabled, and that header
+    // must not become an attacker-controlled way to evade the shared limit.
+    const address = request.raw.socket.remoteAddress || "unknown";
     try {
       if (await sharedRateLimiter.consume(address, 120, 60_000)) return true;
       reply.code(429).send({ error: "rate-limited" });
@@ -612,15 +635,30 @@ export function createRelayServer(options: RelayServerOptions = {}): RelayServer
     }
   };
 
-  const sendHostEvent = (hostId: string, payload: JsonObject): "sent" | "queued" | "rejected" => {
-    const socket = sockets.get(hostId);
-    if (socket?.readyState === WebSocket.OPEN) {
-      socket.send(JSON.stringify(payload));
-      return "sent";
+  const sendBoundedHostEvent = (socket: WebSocket, serialized: string, bytes: number): boolean => {
+    if (socket.readyState !== WebSocket.OPEN
+      || bytes > MAX_WS_BYTES
+      || !hasWebSocketSendCapacity(socket, bytes, maxHostEventBufferedBytes)) {
+      if (socket.readyState === WebSocket.OPEN) socket.terminate();
+      return false;
     }
-    pruneQueuedHostEvents();
+    try {
+      socket.send(serialized);
+      return true;
+    } catch {
+      socket.terminate();
+      return false;
+    }
+  };
+
+  const sendHostEvent = (hostId: string, payload: JsonObject): "sent" | "queued" | "rejected" => {
     const serialized = JSON.stringify(payload);
     const bytes = Buffer.byteLength(serialized, "utf8");
+    const socket = sockets.get(hostId);
+    if (socket?.readyState === WebSocket.OPEN) {
+      return sendBoundedHostEvent(socket, serialized, bytes) ? "sent" : "rejected";
+    }
+    pruneQueuedHostEvents();
     const payloadExpiry = typeof payload.expiresAt === "string" ? Date.parse(payload.expiresAt) : Number.NaN;
     const expiresAtMs = Number.isFinite(payloadExpiry) ? payloadExpiry : Date.now() + QUEUED_HOST_EVENT_TTL_MS;
     if (bytes > MAX_WS_BYTES || expiresAtMs <= Date.now()) return "rejected";
@@ -1158,13 +1196,9 @@ export function createRelayServer(options: RelayServerOptions = {}): RelayServer
     socket.destroy();
   };
 
-  const upgradeClientIdentifier = (request: IncomingMessage, socket: Socket): string => {
-    if (options.trustProxy) {
-      const forwarded = request.headers["x-forwarded-for"];
-      const first = Array.isArray(forwarded) ? forwarded[0] : forwarded;
-      const client = first?.split(",", 1)[0]?.trim();
-      if (client) return client;
-    }
+  const upgradeClientIdentifier = (_request: IncomingMessage, socket: Socket): string => {
+    // The upgrade limiter intentionally keys on the TCP peer. Unlike Fastify's
+    // request.ip, this cannot be changed by a client-supplied forwarded header.
     return socket.remoteAddress ?? "unknown";
   };
 
@@ -1300,8 +1334,8 @@ export function createRelayServer(options: RelayServerOptions = {}): RelayServer
               continue;
             }
           }
-          if (ws.readyState !== WebSocket.OPEN) break;
-          ws.send(JSON.stringify(item.payload));
+          const serialized = JSON.stringify(item.payload);
+          if (!sendBoundedHostEvent(ws, serialized, Buffer.byteLength(serialized, "utf8"))) break;
         }
         return;
       }
@@ -1542,6 +1576,7 @@ async function main(): Promise<void> {
     trustProxy: process.env.MSH_CO_MANAGEMENT_TRUST_PROXY === "1",
     hstsMaxAgeSeconds: Number(process.env.MSH_CO_MANAGEMENT_HSTS_MAX_AGE ?? 0),
     maxWebSocketUpgradeAttempts: Number(process.env.MSH_CO_MANAGEMENT_MAX_WEBSOCKET_UPGRADE_ATTEMPTS ?? MAX_WEBSOCKET_UPGRADE_ATTEMPTS),
+    maxHostEventBufferedBytes: Number(process.env.MSH_CO_MANAGEMENT_MAX_HOST_EVENT_BUFFERED_BYTES ?? MAX_HOST_EVENT_BUFFERED_BYTES),
     readinessCheck: pool ? async () => { await pool!.query("SELECT 1"); } : undefined,
     onClose: pool ? async () => { await pool!.end(); } : undefined,
   });

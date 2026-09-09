@@ -7,6 +7,7 @@ import {
   assertRelayRuntimeConfiguration,
   configuredPort,
   createRelayServer,
+  hasWebSocketSendCapacity,
   MemoryRateLimiter,
 } from "./server.ts";
 import { MEMORY_OPERATION_RETENTION_MS, MemoryRelayStore, SESSION_ABSOLUTE_MS, SESSION_IDLE_MS, hashRelaySecret, type RelayStore } from "./store.ts";
@@ -262,6 +263,13 @@ test("MemoryRateLimiter reclaims expired windows and fails closed at capacity", 
   assert.equal(await limiter.consume("second", 1, 1_000), true);
 });
 
+test("bounded WebSocket send capacity rejects invalid or over-limit buffers", () => {
+  assert.equal(hasWebSocketSendCapacity({ bufferedAmount: 0 }, 100, 100), true);
+  assert.equal(hasWebSocketSendCapacity({ bufferedAmount: 1 }, 100, 100), false);
+  assert.equal(hasWebSocketSendCapacity({ bufferedAmount: 0 }, 101, 100), false);
+  assert.equal(hasWebSocketSendCapacity({ bufferedAmount: Number.NaN }, 100, 100), false);
+});
+
 test("host disconnect removes cached snapshots and revokes existing sessions", () => {
   const store = new MemoryRelayStore();
   store.registerHost("host-test", token);
@@ -393,12 +401,12 @@ test("relay bounds pre-auth WebSocket connections and releases the budget", asyn
   await openSocket(third);
 });
 
-test("relay rate-limits WebSocket upgrade attempts per source", async (t) => {
-  const relay = createRelayServer({ maxWebSocketUpgradeAttempts: 1, maxPreAuthWebSocketConnections: 8 });
+test("relay rate-limits WebSocket upgrade attempts by the TCP peer even with proxy headers", async (t) => {
+  const relay = createRelayServer({ maxWebSocketUpgradeAttempts: 1, maxPreAuthWebSocketConnections: 8, trustProxy: true });
   t.after(async () => relay.close());
   await relay.start(0, "127.0.0.1");
   const address = relay.app.server.address() as AddressInfo;
-  const first = new WebSocket(`ws://127.0.0.1:${address.port}/ws/host`, { headers: { Authorization: `Bearer ${token}` } });
+  const first = new WebSocket(`ws://127.0.0.1:${address.port}/ws/host`, { headers: { Authorization: `Bearer ${token}`, "X-Forwarded-For": "198.51.100.1" } });
   t.after(() => first.terminate());
   await openSocket(first);
   await new Promise<void>((resolve) => {
@@ -406,7 +414,7 @@ test("relay rate-limits WebSocket upgrade attempts per source", async (t) => {
     first.terminate();
   });
 
-  const second = new WebSocket(`ws://127.0.0.1:${address.port}/ws/host`, { headers: { Authorization: `Bearer ${token}` } });
+  const second = new WebSocket(`ws://127.0.0.1:${address.port}/ws/host`, { headers: { Authorization: `Bearer ${token}`, "X-Forwarded-For": "198.51.100.2" } });
   t.after(() => second.terminate());
   const statusCode = await new Promise<number>((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error("websocket-rate-limit-timeout")), 1_000);
@@ -417,6 +425,69 @@ test("relay rate-limits WebSocket upgrade attempts per source", async (t) => {
     second.once("error", () => undefined);
   });
   assert.equal(statusCode, 429);
+});
+
+test("relay closes a connected host before exceeding its event send buffer", async (t) => {
+  const relay = createRelayServer({
+    secureCookies: false,
+    allowedOrigins: [origin],
+    maxHostEventBufferedBytes: 256 * 1024,
+  });
+  t.after(async () => relay.close());
+  await relay.start(0, "127.0.0.1");
+  const address = relay.app.server.address() as AddressInfo;
+  relay.store.registerHost("buffered-host", token);
+  relay.store.bindHostServer("buffered-host", "server-test");
+
+  let hostSocket: WebSocket;
+  let serverSocket: WebSocket | undefined;
+  const webSocketPrototype = WebSocket.prototype as unknown as {
+    send(this: WebSocket, ...args: unknown[]): void;
+  };
+  const originalSend = webSocketPrototype.send;
+  webSocketPrototype.send = function (this: WebSocket, ...args: unknown[]) {
+    if (this !== hostSocket && (this as WebSocket & { _isServer?: boolean })._isServer === true) {
+      serverSocket = this;
+    }
+    return originalSend.apply(this, args);
+  };
+  t.after(() => {
+    webSocketPrototype.send = originalSend;
+  });
+
+  hostSocket = new WebSocket(`ws://127.0.0.1:${address.port}/ws/host`, { headers: { Authorization: `Bearer ${token}` } });
+  hostSocket.on("error", () => undefined);
+  t.after(() => hostSocket.terminate());
+  await openSocket(hostSocket);
+  hostSocket.send(JSON.stringify({ type: "host.hello", protocolVersion: 1, hostId: "buffered-host", serverId: "server-test" }));
+  await waitForSocketMessage(hostSocket, (payload) => payload.type === "host.ready");
+  assert.ok(serverSocket);
+  Object.defineProperty(serverSocket, "bufferedAmount", { configurable: true, value: 256 * 1024 });
+
+  const eventSecret = "e".repeat(48);
+  relay.store.registerInvite({
+    inviteId: "buffered-invite",
+    serverId: "server-test",
+    hostId: "buffered-host",
+    secretHash: hashRelaySecret(eventSecret),
+    role: "viewer",
+    expiresAt: new Date(Date.now() + 60_000).toISOString(),
+  });
+  const response = await relay.app.inject({
+    method: "POST",
+    url: "/api/v1/invites/redeem",
+    headers: { origin },
+    payload: { secret: eventSecret, displayName: "Buffered" },
+  });
+  assert.equal(response.statusCode, 503);
+  assert.deepEqual(response.json(), { error: "host-notification-unavailable" });
+  await new Promise<void>((resolve) => {
+    if (hostSocket.readyState === WebSocket.CLOSED) {
+      resolve();
+      return;
+    }
+    hostSocket.once("close", () => resolve());
+  });
 });
 
 test("relay terminates a WebSocket when its bounded inbound queue overflows", async (t) => {

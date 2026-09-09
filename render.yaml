@@ -22,6 +22,8 @@ services:
         value: "0"
       - key: MSH_CO_MANAGEMENT_HSTS_MAX_AGE
         value: "300"
+      - key: MSH_CO_MANAGEMENT_MAX_HOST_EVENT_BUFFERED_BYTES
+        value: "8388608"
       - key: MSH_CO_MANAGEMENT_DATABASE_URL
         sync: false
       - key: MSH_CO_MANAGEMENT_MIGRATION_DATABASE_URL
