@@ -17,6 +17,10 @@ export const AUDIT_MAX_ROWS_PER_SCOPE = 10_000;
  * maintenance policy.
  */
 export const MEMORY_OPERATION_RETENTION_MS = 24 * 60 * 60 * 1_000;
+/** PostgreSQL retention for terminal account/session records. */
+export const RELAY_RECORD_RETENTION_MS = AUDIT_RETENTION_MS;
+/** PostgreSQL retention for terminal operation results. */
+export const RELAY_TERMINAL_OPERATION_RETENTION_MS = MEMORY_OPERATION_RETENTION_MS;
 
 export interface MemoryRelayStoreLimits {
   maxHosts: number;
@@ -132,6 +136,7 @@ export type Awaitable<T> = T | Promise<T>;
 export interface RelayStore {
   registerHost(hostId: string, token: string): Awaitable<void>;
   verifyHost(hostId: string, token: string): Awaitable<boolean>;
+  touchHost(hostId: string): Awaitable<void>;
   hasHost(hostId: string): Awaitable<boolean>;
   bindHostServer(hostId: string, serverId: string): Awaitable<void>;
   hostOwnsServer(hostId: string, serverId: string): Awaitable<boolean>;
@@ -330,6 +335,11 @@ export class MemoryRelayStore implements RelayStore {
     return valid;
   }
 
+  touchHost(hostId: string): void {
+    const host = this.hosts.get(hostId);
+    if (host) host.lastSeenAt = this.now();
+  }
+
   hasHost(hostId: string): boolean {
     return this.hosts.has(hostId);
   }
@@ -485,6 +495,7 @@ export class MemoryRelayStore implements RelayStore {
   approveParticipant(hostId: string, serverId: string, participantId: string): void {
     const participant = this.participants.get(this.participantKey(hostId, participantId));
     if (!participant || participant.serverId !== serverId) throw new Error("participant-not-found");
+    if (participant.state !== "pending") throw new Error("participant-not-pending");
     if (this.milliseconds(participant.pendingExpiresAt) <= this.clock().getTime()) {
       participant.state = "revoked";
       throw new Error("participant-expired");

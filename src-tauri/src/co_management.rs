@@ -677,6 +677,9 @@ impl CoManagementStore {
                  WHEN co_management_participants.state='approved'
                    AND co_management_participants.permission_generation=excluded.permission_generation
                  THEN 'approved'
+                 WHEN co_management_participants.state='revoked'
+                   AND co_management_participants.permission_generation=excluded.permission_generation
+                 THEN 'revoked'
                  ELSE 'pending'
                END,
                join_code_hash=excluded.join_code_hash,
@@ -712,6 +715,11 @@ impl CoManagementStore {
             .participant(server_id, participant_id)?
             .ok_or(AppError::NotFound)?;
         if state == "approved" {
+            if participant.state != "pending" {
+                return Err(AppError::Validation(
+                    "共同管理の参加者は保留中の場合だけ承認できます".into(),
+                ));
+            }
             let config = self.config(server_id)?.ok_or(AppError::NotFound)?;
             if !config.enabled {
                 return Err(AppError::Validation(
@@ -4157,6 +4165,15 @@ mod tests {
             .unwrap();
         assert!(
             authorize_participant(&co_store, &profile.id, "participant-test", "editor").is_ok()
+        );
+
+        co_store
+            .set_participant_state(&profile.id, "participant-test", "revoked")
+            .unwrap();
+        assert!(
+            co_store
+                .set_participant_state(&profile.id, "participant-test", "approved")
+                .is_err()
         );
 
         drop(co_store);

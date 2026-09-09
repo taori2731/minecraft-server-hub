@@ -31,11 +31,21 @@ import {
 } from "./postgres-store.ts";
 import { RelayKeyring } from "./relay-crypto.ts";
 import { verifyMigrations } from "./migrations.ts";
+import { postgresSslConfiguration, assertDatabaseTlsConfiguration } from "./database-config.ts";
 
 const MAX_BODY_BYTES = 64 * 1024;
 const MAX_WS_BYTES = 256 * 1024;
 export const MAX_PENDING_HOST_REQUESTS = 1_024;
 export const DEFAULT_MEMORY_RATE_LIMIT_ENTRIES = 10_000;
+export const MAX_ACTIVE_WEB_SOCKETS = 512;
+export const MAX_PREAUTH_WEB_SOCKETS = 128;
+export const MAX_INBOUND_WEB_SOCKET_MESSAGES = 64;
+export const MAX_INBOUND_WEB_SOCKET_BYTES = 2 * 1024 * 1024;
+export const MAX_QUEUED_HOST_EVENTS = 4_096;
+export const MAX_QUEUED_HOST_EVENT_BYTES = 8 * 1024 * 1024;
+export const MAX_QUEUED_HOST_EVENT_HOSTS = 1_024;
+const MAX_QUEUED_HOST_EVENTS_PER_HOST = 100;
+const QUEUED_HOST_EVENT_TTL_MS = 10 * 60_000;
 const SESSION_COOKIE = "msh_co_session";
 const CSRF_COOKIE = "msh_co_csrf";
 const REQUEST_ID_RE = /^[A-Za-z0-9_-]{8,128}$/u;
@@ -66,6 +76,28 @@ const EDITABLE_KEYS = new Set([
 
 type JsonObject = Record<string, unknown>;
 
+interface QueuedHostEvent {
+  payload: JsonObject;
+  bytes: number;
+  expiresAtMs: number;
+}
+
+interface InboundWebSocketMessage {
+  data: RawData;
+  bytes: number;
+}
+
+function validPositiveLimit(value: number): boolean {
+  return Number.isSafeInteger(value) && value > 0;
+}
+
+function rawDataBuffer(data: RawData): Buffer {
+  if (Buffer.isBuffer(data)) return data;
+  if (data instanceof ArrayBuffer) return Buffer.from(data);
+  if (Array.isArray(data)) return Buffer.concat(data);
+  return Buffer.from(String(data), "utf8");
+}
+
 export interface RelayServerOptions {
   store?: RelayStore;
   rateLimiter?: SharedRateLimiter;
@@ -77,6 +109,13 @@ export interface RelayServerOptions {
   trustProxy?: boolean;
   hstsMaxAgeSeconds?: number;
   maxPendingHostRequests?: number;
+  maxWebSocketConnections?: number;
+  maxPreAuthWebSocketConnections?: number;
+  maxInboundWebSocketMessages?: number;
+  maxInboundWebSocketBytes?: number;
+  maxQueuedHostEvents?: number;
+  maxQueuedHostEventBytes?: number;
+  maxQueuedHostEventHosts?: number;
 }
 
 export interface RelayServer {
@@ -90,7 +129,7 @@ export function assertRelayRuntimeConfiguration(env: NodeJS.ProcessEnv = process
   if (env.NODE_ENV === "production") {
     if (!env.MSH_CO_MANAGEMENT_DATABASE_URL) throw new Error("本番中継は停止しました。PostgreSQL接続先がありません。");
     if (!env.MSH_CO_MANAGEMENT_RELAY_KEYS) throw new Error("本番中継は停止しました。暗号化鍵リングがありません。");
-    if (env.MSH_CO_MANAGEMENT_DATABASE_SSL === "disable") throw new Error("本番中継は停止しました。PostgreSQL TLSを無効化できません。");
+    assertDatabaseTlsConfiguration(env);
     const origins = (env.MSH_CO_MANAGEMENT_ALLOWED_ORIGINS ?? "").split(",").map((value) => value.trim()).filter(Boolean);
     if (origins.length === 0 || origins.some((origin) => !origin.startsWith("https://") || origin.includes("localhost") || origin.includes("127.0.0.1"))) {
       throw new Error("本番中継は停止しました。HTTPSのOrigin許可リストを明示してください。");
@@ -254,6 +293,8 @@ function genericError(error: unknown): RelayError {
         return new RelayError(503, "relay-memory-capacity");
       case "participant-expired":
         return new RelayError(403, "session-not-authorized");
+      case "participant-not-pending":
+        return new RelayError(409, "participant-not-pending");
       default:
         break;
     }
@@ -468,14 +509,34 @@ export function createRelayServer(options: RelayServerOptions = {}): RelayServer
   ]);
   const secureCookies = options.secureCookies ?? process.env.NODE_ENV === "production";
   const maxPendingHostRequests = options.maxPendingHostRequests ?? MAX_PENDING_HOST_REQUESTS;
-  if (!Number.isSafeInteger(maxPendingHostRequests) || maxPendingHostRequests < 1) {
+  const maxWebSocketConnections = options.maxWebSocketConnections ?? MAX_ACTIVE_WEB_SOCKETS;
+  const maxPreAuthWebSocketConnections = options.maxPreAuthWebSocketConnections ?? MAX_PREAUTH_WEB_SOCKETS;
+  const maxInboundWebSocketMessages = options.maxInboundWebSocketMessages ?? MAX_INBOUND_WEB_SOCKET_MESSAGES;
+  const maxInboundWebSocketBytes = options.maxInboundWebSocketBytes ?? MAX_INBOUND_WEB_SOCKET_BYTES;
+  const maxQueuedHostEvents = options.maxQueuedHostEvents ?? MAX_QUEUED_HOST_EVENTS;
+  const maxQueuedHostEventBytes = options.maxQueuedHostEventBytes ?? MAX_QUEUED_HOST_EVENT_BYTES;
+  const maxQueuedHostEventHosts = options.maxQueuedHostEventHosts ?? MAX_QUEUED_HOST_EVENT_HOSTS;
+  if (!validPositiveLimit(maxPendingHostRequests)
+    || !validPositiveLimit(maxWebSocketConnections)
+    || !validPositiveLimit(maxPreAuthWebSocketConnections)
+    || !validPositiveLimit(maxInboundWebSocketMessages)
+    || !validPositiveLimit(maxInboundWebSocketBytes)
+    || maxInboundWebSocketBytes < MAX_WS_BYTES
+    || !validPositiveLimit(maxQueuedHostEvents)
+    || !validPositiveLimit(maxQueuedHostEventBytes)
+    || maxQueuedHostEventBytes < MAX_WS_BYTES
+    || !validPositiveLimit(maxQueuedHostEventHosts)) {
     throw new Error("invalid-memory-limits");
   }
   const app = fastify({ logger: false, bodyLimit: MAX_BODY_BYTES, trustProxy: options.trustProxy ?? false });
   const sockets = new Map<string, WebSocket>();
-  const queuedHostEvents = new Map<string, JsonObject[]>();
+  const queuedHostEvents = new Map<string, QueuedHostEvent[]>();
+  let queuedHostEventCount = 0;
+  let queuedHostEventBytes = 0;
   const pending = new Map<string, PendingHostRequest>();
   const connectedSockets = new Set<WebSocket>();
+  const preAuthSockets = new Set<WebSocket>();
+  const pendingUpgradeSockets = new Set<Socket>();
   const wss = new WebSocketServer({
     noServer: true,
     clientTracking: false,
@@ -521,16 +582,52 @@ export function createRelayServer(options: RelayServerOptions = {}): RelayServer
     }
   };
 
-  const sendHostEvent = (hostId: string, payload: JsonObject): boolean => {
+  const removeQueuedHostEvents = (hostId: string): QueuedHostEvent[] => {
+    const queue = queuedHostEvents.get(hostId);
+    if (!queue) return [];
+    queuedHostEvents.delete(hostId);
+    queuedHostEventCount -= queue.length;
+    queuedHostEventBytes -= queue.reduce((total, item) => total + item.bytes, 0);
+    return queue;
+  };
+
+  const pruneQueuedHostEvents = (nowMs = Date.now()): void => {
+    for (const [hostId, queue] of queuedHostEvents) {
+      const retained = queue.filter((item) => item.expiresAtMs > nowMs);
+      if (retained.length === queue.length) continue;
+      queuedHostEventCount -= queue.length - retained.length;
+      queuedHostEventBytes -= queue
+        .filter((item) => item.expiresAtMs <= nowMs)
+        .reduce((total, item) => total + item.bytes, 0);
+      if (retained.length === 0) queuedHostEvents.delete(hostId);
+      else queuedHostEvents.set(hostId, retained);
+    }
+  };
+
+  const sendHostEvent = (hostId: string, payload: JsonObject): "sent" | "queued" | "rejected" => {
     const socket = sockets.get(hostId);
     if (socket?.readyState === WebSocket.OPEN) {
       socket.send(JSON.stringify(payload));
-      return true;
+      return "sent";
     }
+    pruneQueuedHostEvents();
+    const serialized = JSON.stringify(payload);
+    const bytes = Buffer.byteLength(serialized, "utf8");
+    const payloadExpiry = typeof payload.expiresAt === "string" ? Date.parse(payload.expiresAt) : Number.NaN;
+    const expiresAtMs = Number.isFinite(payloadExpiry) ? payloadExpiry : Date.now() + QUEUED_HOST_EVENT_TTL_MS;
+    if (bytes > MAX_WS_BYTES || expiresAtMs <= Date.now()) return "rejected";
     const queue = queuedHostEvents.get(hostId) ?? [];
-    if (queue.length < 100) queue.push(payload);
+    if (queue.length >= MAX_QUEUED_HOST_EVENTS_PER_HOST
+      || queuedHostEventCount >= maxQueuedHostEvents
+      || queuedHostEventBytes + bytes > maxQueuedHostEventBytes
+      || (!queuedHostEvents.has(hostId) && queuedHostEvents.size >= maxQueuedHostEventHosts)) {
+      return "rejected";
+    }
+    queue.push({ payload, bytes, expiresAtMs });
     queuedHostEvents.set(hostId, queue);
-    return false;
+    queuedHostEventCount += 1;
+    queuedHostEventBytes += bytes;
+    return "queued";
   };
 
   const sendHostRequest = (
@@ -675,7 +772,10 @@ export function createRelayServer(options: RelayServerOptions = {}): RelayServer
     }
     try {
       const redeemed = await store.redeemInvite(body.secret, body.displayName);
-      sendHostEvent(redeemed.session.hostId, redeemed.pendingEvent);
+      const delivery = sendHostEvent(redeemed.session.hostId, redeemed.pendingEvent);
+      if (delivery === "rejected") {
+        throw new RelayError(503, "host-notification-unavailable");
+      }
       const session = await store.sessionView(redeemed.session.sessionId);
       if (!session) throw new RelayError(500, "session-creation-failed");
       setSessionCookies(reply, redeemed.session.sessionId, redeemed.session.csrfToken, secureCookies);
@@ -1042,7 +1142,14 @@ export function createRelayServer(options: RelayServerOptions = {}): RelayServer
     reply.code(404).send({ error: "not-found" });
   });
 
-  const upgradeHandler = (request: import("node:http").IncomingMessage, socket: import("node:net").Socket, head: Buffer) => {
+  const rejectUpgrade = (socket: Socket, status: number, reason: string): void => {
+    if (socket.destroyed) return;
+    const body = `${reason}\n`;
+    socket.write(`HTTP/1.1 ${status} Service Unavailable\r\nConnection: close\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: ${Buffer.byteLength(body, "utf8")}\r\n\r\n${body}`);
+    socket.destroy();
+  };
+
+  const upgradeHandler = (request: import("node:http").IncomingMessage, socket: Socket, head: Buffer) => {
     const pathname = new URL(request.url ?? "/", "http://relay.local").pathname;
     if (pathname !== "/ws/host") {
       socket.destroy();
@@ -1056,23 +1163,45 @@ export function createRelayServer(options: RelayServerOptions = {}): RelayServer
       socket.destroy();
       return;
     }
-    wss.handleUpgrade(request, socket, head, (ws: WebSocket) => wss.emit("connection", ws, request, token));
+    if (connectedSockets.size + pendingUpgradeSockets.size >= maxWebSocketConnections
+      || preAuthSockets.size + pendingUpgradeSockets.size >= maxPreAuthWebSocketConnections) {
+      rejectUpgrade(socket, 503, "websocket-capacity");
+      return;
+    }
+    pendingUpgradeSockets.add(socket);
+    const releaseUpgrade = () => {
+      pendingUpgradeSockets.delete(socket);
+      socket.off("close", releaseUpgrade);
+      socket.off("error", releaseUpgrade);
+    };
+    socket.once("close", releaseUpgrade);
+    socket.once("error", releaseUpgrade);
+    try {
+      wss.handleUpgrade(request, socket, head, (ws: WebSocket) => {
+        releaseUpgrade();
+        wss.emit("connection", ws, request, token);
+      });
+    } catch {
+      releaseUpgrade();
+      socket.destroy();
+    }
   };
   app.server.on("upgrade", upgradeHandler);
 
   wss.on("connection", (ws: WebSocket, request: IncomingMessage, token: string) => {
     let authenticatedHostId: string | undefined;
     connectedSockets.add(ws);
+    preAuthSockets.add(ws);
     const authTimer = setTimeout(() => {
-      if (!authenticatedHostId) ws.close(1008, "hello-required");
+      if (!authenticatedHostId) ws.terminate();
     }, 5_000);
     socketAlive.set(ws, true);
     ws.on("pong", () => socketAlive.set(ws, true));
     ws.on("error", () => undefined);
     const handleMessage = async (data: RawData): Promise<void> => {
-      const raw = Buffer.isBuffer(data) ? data.toString("utf8") : String(data);
+      const raw = rawDataBuffer(data).toString("utf8");
       if (Buffer.byteLength(raw, "utf8") > MAX_WS_BYTES) {
-        ws.close(1009, "message-too-large");
+        ws.terminate();
         return;
       }
       let payload: JsonObject;
@@ -1082,34 +1211,35 @@ export function createRelayServer(options: RelayServerOptions = {}): RelayServer
         if (!object) throw new Error("not-object");
         payload = object;
       } catch {
-        ws.close(1003, "invalid-json");
+        ws.terminate();
         return;
       }
       const type = payload.type;
       if (payload.protocolVersion !== 1 || typeof type !== "string") {
-        ws.close(1008, "invalid-protocol");
+        ws.terminate();
         return;
       }
       if (!authenticatedHostId) {
         if (type !== "host.hello" || !safeId(payload.hostId) || !safeId(payload.serverId)) {
-          ws.close(1008, "host-authentication-failed");
+          ws.terminate();
           return;
         }
         try {
           if (!await store.verifyHost(payload.hostId, token)) {
-            ws.close(1008, "host-authentication-failed");
+            ws.terminate();
             return;
           }
           await store.bindHostServer(payload.hostId, payload.serverId);
         } catch (error) {
           if (error instanceof RelayStorageUnavailableError) {
-            ws.close(1013, "relay-storage-unavailable");
+            ws.terminate();
             return;
           }
-          ws.close(1008, "host-binding-failed");
+          ws.terminate();
           return;
         }
         authenticatedHostId = payload.hostId;
+        preAuthSockets.delete(ws);
         clearTimeout(authTimer);
         const previous = sockets.get(authenticatedHostId);
         if (previous && previous !== ws) previous.close(1008, "replaced");
@@ -1120,12 +1250,35 @@ export function createRelayServer(options: RelayServerOptions = {}): RelayServer
           hostId: authenticatedHostId,
           serverId: payload.serverId,
         }));
-        const queue = queuedHostEvents.get(authenticatedHostId) ?? [];
-        queuedHostEvents.delete(authenticatedHostId);
-        for (const item of queue) ws.send(JSON.stringify(item));
+        const queue = removeQueuedHostEvents(authenticatedHostId);
+        for (let index = 0; index < queue.length; index += 1) {
+          const item = queue[index];
+          if (item.expiresAtMs <= Date.now()) continue;
+          if (item.payload.type === "participant.pending") {
+            const participantId = typeof item.payload.participantId === "string" ? item.payload.participantId : "";
+            const participant = participantId ? await store.participant(authenticatedHostId, participantId) : undefined;
+            if (!participant
+              || participant.serverId !== payload.serverId
+              || participant.state !== "pending"
+              || !Number.isFinite(Date.parse(participant.pendingExpiresAt))
+              || Date.parse(participant.pendingExpiresAt) <= Date.now()) {
+              continue;
+            }
+          }
+          if (ws.readyState !== WebSocket.OPEN) break;
+          ws.send(JSON.stringify(item.payload));
+        }
         return;
       }
       if (type === "host.ping") {
+        try {
+          await store.touchHost(authenticatedHostId);
+        } catch (error) {
+          if (error instanceof RelayStorageUnavailableError) {
+            ws.terminate();
+            return;
+          }
+        }
         ws.send(JSON.stringify({ type: "host.pong", protocolVersion: 1 }));
         return;
       }
@@ -1135,7 +1288,7 @@ export function createRelayServer(options: RelayServerOptions = {}): RelayServer
         ownsServer = safeId(serverId) && await store.hostOwnsServer(authenticatedHostId, serverId);
       } catch (error) {
         if (error instanceof RelayStorageUnavailableError) {
-          ws.close(1013, "relay-storage-unavailable");
+          ws.terminate();
           return;
         }
       }
@@ -1213,24 +1366,64 @@ export function createRelayServer(options: RelayServerOptions = {}): RelayServer
         }
       }
     };
-    let messageChain = Promise.resolve();
+    const messageQueue: InboundWebSocketMessage[] = [];
+    let queuedMessageBytes = 0;
+    let activeMessageBytes = 0;
+    let processingMessages = false;
+    const processMessageQueue = async (): Promise<void> => {
+      if (processingMessages) return;
+      processingMessages = true;
+      try {
+        while (messageQueue.length > 0 && ws.readyState === WebSocket.OPEN) {
+          const item = messageQueue.shift()!;
+          queuedMessageBytes -= item.bytes;
+          activeMessageBytes = item.bytes;
+          try {
+            await handleMessage(item.data);
+          } finally {
+            activeMessageBytes = 0;
+          }
+        }
+      } finally {
+        messageQueue.length = 0;
+        queuedMessageBytes = 0;
+        activeMessageBytes = 0;
+        processingMessages = false;
+      }
+    };
     ws.on("message", (data: RawData) => {
-      messageChain = messageChain.then(() => handleMessage(data)).catch(() => {
-        if (ws.readyState === WebSocket.OPEN) ws.close(1011, "relay-message-failed");
+      if (ws.readyState !== WebSocket.OPEN) return;
+      const bytes = rawDataBuffer(data).byteLength;
+      const pendingMessages = messageQueue.length + (processingMessages ? 1 : 0);
+      if (pendingMessages >= maxInboundWebSocketMessages
+        || queuedMessageBytes + activeMessageBytes + bytes > maxInboundWebSocketBytes) {
+        ws.terminate();
+        return;
+      }
+      messageQueue.push({ data, bytes });
+      queuedMessageBytes += bytes;
+      void processMessageQueue().catch(() => {
+        if (ws.readyState === WebSocket.OPEN) ws.terminate();
       });
     });
     ws.on("close", () => {
       clearTimeout(authTimer);
       socketAlive.delete(ws);
       connectedSockets.delete(ws);
+      preAuthSockets.delete(ws);
+      messageQueue.length = 0;
+      queuedMessageBytes = 0;
+      activeMessageBytes = 0;
       if (authenticatedHostId && sockets.get(authenticatedHostId) === ws) {
         sockets.delete(authenticatedHostId);
+        removeQueuedHostEvents(authenticatedHostId);
         void Promise.resolve(store.disconnectHost(authenticatedHostId)).catch(() => undefined);
       }
     });
   });
 
   const heartbeat = setInterval(() => {
+    pruneQueuedHostEvents();
     for (const socket of connectedSockets) {
       if (socketAlive.get(socket) === false) {
         socket.terminate();
@@ -1238,6 +1431,11 @@ export function createRelayServer(options: RelayServerOptions = {}): RelayServer
       }
       socketAlive.set(socket, false);
       socket.ping();
+    }
+    for (const [hostId, socket] of sockets) {
+      void Promise.resolve(store.touchHost(hostId)).catch(() => {
+        if (socket.readyState === WebSocket.OPEN) socket.terminate();
+      });
     }
   }, 30_000);
 
@@ -1251,8 +1449,11 @@ export function createRelayServer(options: RelayServerOptions = {}): RelayServer
     async close() {
       clearInterval(heartbeat);
       for (const socket of connectedSockets) socket.terminate();
+      for (const socket of pendingUpgradeSockets) socket.destroy();
       sockets.clear();
       queuedHostEvents.clear();
+      queuedHostEventCount = 0;
+      queuedHostEventBytes = 0;
       wss.close();
       for (const item of pending.values()) {
         clearTimeout(item.timeoutTimer);
@@ -1261,6 +1462,8 @@ export function createRelayServer(options: RelayServerOptions = {}): RelayServer
       }
       pending.clear();
       connectedSockets.clear();
+      preAuthSockets.clear();
+      pendingUpgradeSockets.clear();
       socketAlive.clear();
       await app.close();
       await options.onClose?.();
@@ -1285,7 +1488,7 @@ async function main(): Promise<void> {
       connectionTimeoutMillis: 5_000,
       statement_timeout: 10_000,
       application_name: "minecraft-server-hub-co-management-relay",
-      ssl: process.env.MSH_CO_MANAGEMENT_DATABASE_SSL === "disable" ? false : { rejectUnauthorized: true },
+      ssl: postgresSslConfiguration(),
     });
     await verifyMigrations(pool);
     const keyring = RelayKeyring.fromEnvironment(process.env.MSH_CO_MANAGEMENT_RELAY_KEYS);

@@ -1,6 +1,7 @@
 import { Pool } from "pg";
 import { pathToFileURL } from "node:url";
 import { applyMigrations } from "./migrations.ts";
+import { postgresSslConfiguration } from "./database-config.ts";
 
 function databasePool(): Pool {
   const connectionString = process.env.MSH_CO_MANAGEMENT_MIGRATION_DATABASE_URL
@@ -15,7 +16,7 @@ function databasePool(): Pool {
     connectionTimeoutMillis: 5_000,
     statement_timeout: 10_000,
     application_name: "minecraft-server-hub-co-management-migrate",
-    ssl: process.env.MSH_CO_MANAGEMENT_DATABASE_SSL === "disable" ? false : { rejectUnauthorized: true },
+    ssl: postgresSslConfiguration(),
   });
 }
 

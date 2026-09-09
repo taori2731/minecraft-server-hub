@@ -1,6 +1,7 @@
 import { Pool } from "pg";
 import { pathToFileURL } from "node:url";
 import { PostgresRelayMaintenance } from "./postgres-store.ts";
+import { postgresSslConfiguration } from "./database-config.ts";
 
 function databasePool(): Pool {
   const connectionString = process.env.MSH_CO_MANAGEMENT_MAINTENANCE_DATABASE_URL;
@@ -12,7 +13,7 @@ function databasePool(): Pool {
     connectionTimeoutMillis: 5_000,
     statement_timeout: 30_000,
     application_name: "minecraft-server-hub-co-management-maintenance",
-    ssl: process.env.MSH_CO_MANAGEMENT_DATABASE_SSL === "disable" ? false : { rejectUnauthorized: true },
+    ssl: postgresSslConfiguration(),
   });
 }
 
@@ -20,7 +21,7 @@ async function main(): Promise<void> {
   const pool = databasePool();
   try {
     const result = await new PostgresRelayMaintenance(pool).run();
-    console.log(`Maintenance complete: auditRowsDeleted=${result.auditRowsDeleted}, rateLimitRowsDeleted=${result.rateLimitRowsDeleted}`);
+    console.log(`Maintenance complete: ${JSON.stringify(result)}`);
   } finally {
     await pool.end();
   }

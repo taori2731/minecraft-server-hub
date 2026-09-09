@@ -1,6 +1,6 @@
 # 共同管理ステージング運用手順
 
-状態（2026-09-09）: 無料ステージングのRenderオリジン、Neon PostgreSQL、Cloudflare DNS/TLS/WSSを構築済み。公開エッジ経由のRustホスト統合試験とhealth確認、公開UIの9言語切替確認、署名付き0.3.8 QA生成物の埋込み公開鍵検証と隔離インストール／アンインストールを完了。物理的な別回線、2ブラウザ手動試験、Authenticode署名、実機での更新適用、実ゲーム、本番運用は未完了。
+状態（2026-09-09）: 無料ステージングのRenderオリジン、Neon PostgreSQL、Cloudflare DNS/TLS/WSSを構築済み。公開エッジ経由のRustホスト統合試験とhealth確認、公開UIの9言語切替確認、署名付き0.3.8 QA生成物の埋込み公開鍵検証と隔離インストール／アンインストールを完了。PostgreSQL保持処理、DB TLS入口統一、WSS資源上限、失効参加者の再承認防止はコードと隔離テストへ反映済み。物理的な別回線、2ブラウザ手動試験、Authenticode署名、実機での更新適用、実ゲーム、本番運用は未完了。
 
 ## 無料ステージング構成
 
@@ -82,6 +82,7 @@ RustホストのUIイベントキューには512件の上限があります。�
 - DB停止時に書込みAPIが503で、Memory Storeへフォールバックしない
 - ホストWSS切断時にスナップショット・招待・参加者が失効
 - HSTSはHTTPS/WSS合格後に`300`から開始済み。全対象ホスト名の受入後に段階的に延長する
+- WSSは接続数、事前認証数、受信メッセージ数/バイト数、ホストイベントキューの件数/バイト数/ホスト数/TTLをアプリ側でも上限管理する。Cloudflare側のIPレート制限は別途設定・検証する
 
 ## 公開エッジの合成2ブラウザ受入
 
@@ -100,18 +101,18 @@ npm run test:co-management:staging
 - Viewerの設定申請が無効であること、Editorの確認画面で`20 → 24`を表示し、`rev. 2`と監査行へ反映されることを確認。
 - ホストWSS切断後、両ブラウザが「参加セッションが終了しました」へ遷移することを確認。
 
-### PostgreSQL監査の保守
+### PostgreSQL保持保守
 
-リレーアプリケーションのDBロールには、通常の要求処理に必要なテーブルの読取・追加・更新だけを与え、監査削除権限は与えない。別の保守ロールを`MSH_CO_MANAGEMENT_MAINTENANCE_DATABASE_URL`へ設定し、期限切れレート制限と、各ホスト・サーバー単位で最新10,000件を残す90日超の監査メタデータだけを定期的に削除する。
+リレーアプリケーションのDBロールには、通常の要求処理に必要なテーブルの読取・追加・更新だけを与え、DELETE権限は与えない。別の保守ロールを`MSH_CO_MANAGEMENT_MAINTENANCE_DATABASE_URL`へ設定し、期限切れセッション・参加者・招待・終端操作・snapshot・孤立したホスト結合/ホスト、期限切れレート制限、保持期限またはスコープ上限を超えた監査メタデータを定期的に削除する。監査の90日期限と最新10,000件上限は独立して適用する。
 
-Neon等の管理PostgreSQLでは、実際のロール名を決めたうえで、リレー用接続ユーザーから`co_management_audit`と`co_management_rate_limits`の`DELETE`を剥奪し、保守用接続ユーザーへその2表の`DELETE`と必要な読取権限だけを付与する。ロール作成・権限変更はDB所有者の管理画面またはSQLコンソールで行い、アプリ起動時には実行しない。
+Neon等の管理PostgreSQLでは、実際のロール名を決めたうえで、リレー用接続ユーザーから対象表の`DELETE`を剥奪し、保守用接続ユーザーへ`co_management_sessions`、`co_management_participants`、`co_management_invites`、`co_management_operations`、`co_management_snapshots`、`co_management_host_servers`、`co_management_hosts`、`co_management_audit`、`co_management_rate_limits`の`DELETE`と、maintenance SQLに必要な読取権限だけを付与する。ロール作成・権限変更はDB所有者の管理画面またはSQLコンソールで行い、アプリ起動時には実行しない。
 
 ```powershell
 $env:MSH_CO_MANAGEMENT_MAINTENANCE_DATABASE_URL = "<maintenance-role-connection-string>"
 npm --prefix co-management/relay run maintenance
 ```
 
-このコマンドは監査メタデータとレート制限行だけを対象にし、操作結果、参加者、設定スナップショット、進行中操作の行を削除しない。接続障害や権限不足時は成功扱いにせず終了する。接続文字列はログへ出さない。
+このコマンドは期限切れのライフサイクル行を安全な順序で削除し、進行中操作、期限内の参加者/セッション、接続中ホストを保持する。接続障害や権限不足時はトランザクションをロールバックして成功扱いにせず終了する。接続文字列はログへ出さない。定期実行間隔は90日より短くし、容量・削除件数・失敗を監視する。
 
 秘密値は合成してメモリ内だけで扱い、試験出力・スクリーンショットへ記録しない。初期未認証の`/api/v1/session` 401と、切断直後の設定API 403/502は想定遷移としてURL・ステータスを限定して扱い、それ以外のブラウザconsole/page errorは失敗にする。これは物理スマートフォン、別回線、手動2ブラウザ、実ゲームの受入ではない。Playwrightは通常のブラウザ実行であり、Codex Browserプラグインはこの環境で利用できないため使用していない。
 
@@ -127,7 +128,7 @@ RenderへCloudflare管理ドメインを関連付ける際は、先にRender側�
 
 ## 未検証・残作業
 
-- 管理PostgreSQLの障害注入・復帰、監査保持・削除、同時実行の実DB受入（Neon接続・起動マイグレーション・ready応答は確認済み）
+- 管理PostgreSQLのNeon実DBでの障害注入・復帰、保持削除ロール権限、同時実行、migration `003_lifecycle_retention.sql` の実DB受入（ローカルPGliteの合成データ試験は完了。Neonの実DB受入は未確認）
 - 物理的な別ネットワークからのRustホスト接続（今回のRust試験は公開エッジ経由だが、同一作業環境からの実行）
 - 現行ソースの署名済みTauriパッケージと、隔離先でのインストール・アンインストール（署名付き生成物の埋込み公開鍵検証とQA用隔離インストール／アンインストールは完了。Authenticodeは未署名。クリーン環境での再インストール・実機更新は未確認）
 - PCと実スマートフォンの2ブラウザの再現可能な手動証跡（ユーザー報告はあるが、こちらの直接操作・別回線証明は未取得）

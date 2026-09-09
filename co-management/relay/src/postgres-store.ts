@@ -5,6 +5,8 @@ import { RelayKeyring } from "./relay-crypto.ts";
 import {
   AUDIT_MAX_ROWS_PER_SCOPE,
   AUDIT_RETENTION_MS,
+  RELAY_RECORD_RETENTION_MS,
+  RELAY_TERMINAL_OPERATION_RETENTION_MS,
   SESSION_ABSOLUTE_MS,
   SESSION_IDLE_MS,
   type InviteRecord,
@@ -95,6 +97,7 @@ const STORE_ERRORS = new Set([
   "invite-invalid-or-expired",
   "invalid-display-name",
   "participant-not-found",
+  "participant-not-pending",
   "participant-expired",
   "session-not-authorized",
   "editor-required",
@@ -232,6 +235,12 @@ export class PostgresRelayStore implements RelayStore {
         await this.pool.query("UPDATE co_management_hosts SET last_seen_at = $2 WHERE host_id = $1", [hostId, this.now()]);
       }
       return valid;
+    });
+  }
+
+  async touchHost(hostId: string): Promise<void> {
+    await this.run(async () => {
+      await this.pool.query("UPDATE co_management_hosts SET last_seen_at = $2 WHERE host_id = $1", [hostId, this.now()]);
     });
   }
 
@@ -477,13 +486,15 @@ export class PostgresRelayStore implements RelayStore {
       const result = await this.pool.query(
         `UPDATE co_management_participants
          SET state = 'approved', approved_at = COALESCE(approved_at, $4), last_seen_at = $4
-         WHERE host_id = $1 AND server_id = $2 AND participant_id = $3 AND pending_expires_at > $4
+         WHERE host_id = $1 AND server_id = $2 AND participant_id = $3
+           AND state = 'pending' AND pending_expires_at > $4
          RETURNING participant_id`,
         [hostId, serverId, participantId, timestamp],
       );
       if (result.rowCount === 1) return;
       const participant = await this.participant(hostId, participantId);
       if (!participant || participant.serverId !== serverId) throw new Error("participant-not-found");
+      if (participant.state !== "pending") throw new Error("participant-not-pending");
       await this.revokeParticipant(hostId, serverId, participantId);
       throw new Error("participant-expired");
     });
@@ -652,6 +663,13 @@ export interface SharedRateLimiter {
 export interface RelayMaintenanceResult {
   auditRowsDeleted: number;
   rateLimitRowsDeleted: number;
+  sessionRowsDeleted: number;
+  participantRowsDeleted: number;
+  inviteRowsDeleted: number;
+  operationRowsDeleted: number;
+  snapshotRowsDeleted: number;
+  hostServerRowsDeleted: number;
+  hostRowsDeleted: number;
 }
 
 /**
@@ -671,6 +689,94 @@ export class PostgresRelayMaintenance {
       try {
         await client.query("BEGIN");
         const now = this.clock();
+        const retentionCutoff = new Date(now.getTime() - RELAY_RECORD_RETENTION_MS).toISOString();
+        const operationCutoff = new Date(now.getTime() - RELAY_TERMINAL_OPERATION_RETENTION_MS).toISOString();
+        await client.query(
+          `UPDATE co_management_participants
+           SET state = 'revoked', last_seen_at = $1
+           WHERE state <> 'revoked'
+             AND (pending_expires_at <= $1 OR absolute_expires_at <= $1)`,
+          [now.toISOString()],
+        );
+        const sessionResult = await client.query(
+          `DELETE FROM co_management_sessions session
+           WHERE session.absolute_expires_at <= $1
+              OR session.idle_expires_at <= $1
+              OR EXISTS (
+                SELECT 1 FROM co_management_participants participant
+                WHERE participant.host_id = session.host_id
+                  AND participant.participant_id = session.participant_id
+                  AND participant.state = 'revoked'
+              )`,
+          [now.toISOString()],
+        );
+        const operationResult = await client.query(
+          `DELETE FROM co_management_operations
+           WHERE state <> 'running' AND updated_at <= $1`,
+          [operationCutoff],
+        );
+        const participantResult = await client.query(
+          `DELETE FROM co_management_participants participant
+           WHERE participant.state = 'revoked'
+             AND participant.last_seen_at <= $1
+             AND NOT EXISTS (
+               SELECT 1 FROM co_management_operations operation
+               WHERE operation.host_id = participant.host_id
+                 AND operation.participant_id = participant.participant_id
+             )`,
+          [retentionCutoff],
+        );
+        const inviteResult = await client.query(
+          `DELETE FROM co_management_invites
+           WHERE CASE
+             WHEN used_at IS NOT NULL THEN used_at
+             WHEN revoked_at IS NOT NULL THEN revoked_at
+             ELSE expires_at
+           END <= $1`,
+          [retentionCutoff],
+        );
+        const snapshotResult = await client.query(
+          `DELETE FROM co_management_snapshots snapshot
+           WHERE EXISTS (
+             SELECT 1 FROM co_management_hosts host
+             WHERE host.host_id = snapshot.host_id AND host.last_seen_at <= $1
+           )`,
+          [retentionCutoff],
+        );
+        const hostServerResult = await client.query(
+          `DELETE FROM co_management_host_servers binding
+           WHERE EXISTS (
+             SELECT 1 FROM co_management_hosts host
+             WHERE host.host_id = binding.host_id AND host.last_seen_at <= $1
+           )
+             AND NOT EXISTS (
+               SELECT 1 FROM co_management_participants participant
+               WHERE participant.host_id = binding.host_id AND participant.server_id = binding.server_id
+             )
+             AND NOT EXISTS (
+               SELECT 1 FROM co_management_invites invite
+               WHERE invite.host_id = binding.host_id AND invite.server_id = binding.server_id
+             )
+             AND NOT EXISTS (
+               SELECT 1 FROM co_management_snapshots snapshot
+               WHERE snapshot.host_id = binding.host_id AND snapshot.server_id = binding.server_id
+             )
+             AND NOT EXISTS (
+               SELECT 1 FROM co_management_operations operation
+               WHERE operation.host_id = binding.host_id AND operation.server_id = binding.server_id
+             )`,
+          [retentionCutoff],
+        );
+        const hostResult = await client.query(
+          `DELETE FROM co_management_hosts host
+           WHERE host.last_seen_at <= $1
+             AND NOT EXISTS (SELECT 1 FROM co_management_host_servers binding WHERE binding.host_id = host.host_id)
+             AND NOT EXISTS (SELECT 1 FROM co_management_invites invite WHERE invite.host_id = host.host_id)
+             AND NOT EXISTS (SELECT 1 FROM co_management_participants participant WHERE participant.host_id = host.host_id)
+             AND NOT EXISTS (SELECT 1 FROM co_management_snapshots snapshot WHERE snapshot.host_id = host.host_id)
+             AND NOT EXISTS (SELECT 1 FROM co_management_operations operation WHERE operation.host_id = host.host_id)`,
+          [retentionCutoff],
+        );
         const auditResult = await client.query(
           `WITH ranked AS (
              SELECT audit_id, at,
@@ -683,8 +789,7 @@ export class PostgresRelayMaintenance {
            DELETE FROM co_management_audit audit
            USING ranked
            WHERE audit.audit_id = ranked.audit_id
-             AND ranked.row_number > $2
-             AND ranked.at < $1`,
+             AND (ranked.row_number > $2 OR ranked.at < $1)`,
           [new Date(now.getTime() - AUDIT_RETENTION_MS).toISOString(), AUDIT_MAX_ROWS_PER_SCOPE],
         );
         const rateLimitResult = await client.query(
@@ -695,6 +800,13 @@ export class PostgresRelayMaintenance {
         return {
           auditRowsDeleted: auditResult.rowCount ?? 0,
           rateLimitRowsDeleted: rateLimitResult.rowCount ?? 0,
+          sessionRowsDeleted: sessionResult.rowCount ?? 0,
+          participantRowsDeleted: participantResult.rowCount ?? 0,
+          inviteRowsDeleted: inviteResult.rowCount ?? 0,
+          operationRowsDeleted: operationResult.rowCount ?? 0,
+          snapshotRowsDeleted: snapshotResult.rowCount ?? 0,
+          hostServerRowsDeleted: hostServerResult.rowCount ?? 0,
+          hostRowsDeleted: hostResult.rowCount ?? 0,
         };
       } catch (error) {
         try {

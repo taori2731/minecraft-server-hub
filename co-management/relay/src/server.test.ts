@@ -2,8 +2,14 @@ import assert from "node:assert/strict";
 import type { AddressInfo } from "node:net";
 import { test } from "node:test";
 import { WebSocket } from "ws";
-import { assertRelayRuntimeConfiguration, configuredPort, createRelayServer, MemoryRateLimiter } from "./server.ts";
-import { MEMORY_OPERATION_RETENTION_MS, MemoryRelayStore, SESSION_ABSOLUTE_MS, SESSION_IDLE_MS, hashRelaySecret } from "./store.ts";
+import { assertDatabaseTlsConfiguration, postgresSslConfiguration } from "./database-config.ts";
+import {
+  assertRelayRuntimeConfiguration,
+  configuredPort,
+  createRelayServer,
+  MemoryRateLimiter,
+} from "./server.ts";
+import { MEMORY_OPERATION_RETENTION_MS, MemoryRelayStore, SESSION_ABSOLUTE_MS, SESSION_IDLE_MS, hashRelaySecret, type RelayStore } from "./store.ts";
 import { isSafePublicSnapshot } from "../../shared/protocol.ts";
 
 const origin = "http://127.0.0.1:8787";
@@ -64,6 +70,22 @@ test("MemoryRelayStore redeems an invite once and hides the join code after appr
   assert.equal(approved?.state, "approved");
   assert.equal(approved?.joinCode, undefined);
   assert.equal(approved?.server, undefined);
+  store.revokeParticipant("host-test", "server-test", redeemed.session.participantId);
+  assert.throws(
+    () => store.approveParticipant("host-test", "server-test", redeemed.session.participantId),
+    /participant-not-pending/u,
+  );
+});
+
+test("all PostgreSQL entry points reject production TLS disable", () => {
+  const production = {
+    NODE_ENV: "production",
+    MSH_CO_MANAGEMENT_DATABASE_SSL: "disable",
+  };
+  assert.throws(() => assertDatabaseTlsConfiguration(production), /PostgreSQL TLS/u);
+  assert.throws(() => postgresSslConfiguration(production), /PostgreSQL TLS/u);
+  assert.deepEqual(postgresSslConfiguration({ NODE_ENV: "development", MSH_CO_MANAGEMENT_DATABASE_SSL: "disable" }), false);
+  assert.deepEqual(postgresSslConfiguration({ NODE_ENV: "production", MSH_CO_MANAGEMENT_DATABASE_SSL: "require" }), { rejectUnauthorized: true });
 });
 
 test("production startup fails closed until persistent storage and TLS are configured", () => {
@@ -337,6 +359,133 @@ test("relay requires the CSRF cookie/header pair to close a session", async (t) 
   const closed = await relay.app.inject({ method: "POST", url: "/api/v1/session/close", headers: { origin, cookie: cookieHeader, "x-csrf-token": decodeURIComponent(csrf) }, payload: {} });
   assert.equal(closed.statusCode, 204);
   assert.equal((await relay.app.inject({ method: "GET", url: "/api/v1/session", headers: { origin, cookie: cookieHeader } })).statusCode, 401);
+});
+
+test("relay bounds pre-auth WebSocket connections and releases the budget", async (t) => {
+  const relay = createRelayServer({ maxPreAuthWebSocketConnections: 1 });
+  t.after(async () => relay.close());
+  await relay.start(0, "127.0.0.1");
+  const address = relay.app.server.address() as AddressInfo;
+  const first = new WebSocket(`ws://127.0.0.1:${address.port}/ws/host`, { headers: { Authorization: `Bearer ${token}` } });
+  t.after(() => first.terminate());
+  await openSocket(first);
+
+  const second = new WebSocket(`ws://127.0.0.1:${address.port}/ws/host`, { headers: { Authorization: `Bearer ${token}` } });
+  t.after(() => second.terminate());
+  const rejected = await new Promise<boolean>((resolve) => {
+    const timer = setTimeout(() => resolve(false), 1_000);
+    const finish = (value: boolean) => {
+      clearTimeout(timer);
+      resolve(value);
+    };
+    second.once("open", () => finish(false));
+    second.once("error", () => finish(true));
+    second.once("close", () => finish(true));
+  });
+  assert.equal(rejected, true);
+
+  await new Promise<void>((resolve) => {
+    first.once("close", () => resolve());
+    first.terminate();
+  });
+  const third = new WebSocket(`ws://127.0.0.1:${address.port}/ws/host`, { headers: { Authorization: `Bearer ${token}` } });
+  t.after(() => third.terminate());
+  await openSocket(third);
+});
+
+test("relay terminates a WebSocket when its bounded inbound queue overflows", async (t) => {
+  const baseStore = new MemoryRelayStore();
+  const store = new Proxy(baseStore, {
+    get(target, property, receiver) {
+      if (property === "verifyHost") {
+        return async (hostId: string, hostToken: string) => {
+          await new Promise((resolve) => setTimeout(resolve, 250));
+          return target.verifyHost(hostId, hostToken);
+        };
+      }
+      const value = Reflect.get(target, property, receiver);
+      return typeof value === "function" ? value.bind(target) : value;
+    },
+  }) as unknown as RelayStore;
+  const relay = createRelayServer({ store, maxInboundWebSocketMessages: 1 });
+  t.after(async () => relay.close());
+  await relay.start(0, "127.0.0.1");
+  const address = relay.app.server.address() as AddressInfo;
+  store.registerHost("slow-host", token);
+  const socket = new WebSocket(`ws://127.0.0.1:${address.port}/ws/host`, { headers: { Authorization: `Bearer ${token}` } });
+  t.after(() => socket.terminate());
+  await openSocket(socket);
+  const closed = new Promise<boolean>((resolve) => {
+    const timer = setTimeout(() => resolve(false), 1_500);
+    socket.once("close", () => {
+      clearTimeout(timer);
+      resolve(true);
+    });
+    socket.once("error", () => undefined);
+  });
+  socket.send(JSON.stringify({ type: "host.hello", protocolVersion: 1, hostId: "slow-host", serverId: "server-test" }));
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  socket.send(JSON.stringify({ type: "host.hello", protocolVersion: 1, hostId: "slow-host", serverId: "server-test" }));
+  assert.equal(await closed, true);
+});
+
+test("invite redemption reports a bounded host-event queue failure", async (t) => {
+  const relay = createRelayServer({ secureCookies: false, maxQueuedHostEvents: 1 });
+  t.after(async () => relay.close());
+  await relay.app.ready();
+  relay.store.registerHost("offline-host", token);
+  relay.store.bindHostServer("offline-host", "server-test");
+  const firstSecret = "a".repeat(48);
+  const secondSecret = "b".repeat(48);
+  const expiresAt = new Date(Date.now() + 60_000).toISOString();
+  relay.store.registerInvite({ inviteId: "invite-first", serverId: "server-test", hostId: "offline-host", secretHash: hashRelaySecret(firstSecret), role: "viewer", expiresAt });
+  relay.store.registerInvite({ inviteId: "invite-second", serverId: "server-test", hostId: "offline-host", secretHash: hashRelaySecret(secondSecret), role: "viewer", expiresAt });
+  const first = await relay.app.inject({ method: "POST", url: "/api/v1/invites/redeem", headers: { origin }, payload: { secret: firstSecret, displayName: "First" } });
+  assert.equal(first.statusCode, 200);
+  const second = await relay.app.inject({ method: "POST", url: "/api/v1/invites/redeem", headers: { origin }, payload: { secret: secondSecret, displayName: "Second" } });
+  assert.equal(second.statusCode, 503);
+  assert.deepEqual(second.json(), { error: "host-notification-unavailable" });
+});
+
+test("host reconnect does not replay a participant event after approval", async (t) => {
+  const relay = createRelayServer({ secureCookies: false, allowedOrigins: [origin] });
+  t.after(async () => relay.close());
+  const base = await relay.start(0, "127.0.0.1");
+  const address = relay.app.server.address() as AddressInfo;
+  relay.store.registerHost("replay-host", token);
+  relay.store.bindHostServer("replay-host", "server-test");
+  const firstSocket = new WebSocket(`${base.replace(/:\d+$/u, `:${address.port}`)}/ws/host`, { headers: { Authorization: `Bearer ${token}` } });
+  t.after(() => firstSocket.terminate());
+  await openSocket(firstSocket);
+  firstSocket.send(JSON.stringify({ type: "host.hello", protocolVersion: 1, hostId: "replay-host", serverId: "server-test" }));
+  await waitForSocketMessage(firstSocket, (payload) => payload.type === "host.ready");
+  await new Promise<void>((resolve) => {
+    firstSocket.once("close", () => resolve());
+    firstSocket.terminate();
+  });
+  await new Promise((resolve) => setTimeout(resolve, 40));
+
+  const pendingSecret = "p".repeat(48);
+  relay.store.registerInvite({ inviteId: "replay-invite", serverId: "server-test", hostId: "replay-host", secretHash: hashRelaySecret(pendingSecret), role: "viewer", expiresAt: new Date(Date.now() + 60_000).toISOString() });
+  const redeemed = await relay.app.inject({ method: "POST", url: "/api/v1/invites/redeem", headers: { origin }, payload: { secret: pendingSecret, displayName: "Pending" } });
+  assert.equal(redeemed.statusCode, 200);
+  const participantId = (redeemed.json() as { session: { participantId: string } }).session.participantId;
+  relay.store.approveParticipant("replay-host", "server-test", participantId);
+
+  const reconnect = new WebSocket(`ws://127.0.0.1:${address.port}/ws/host`, { headers: { Authorization: `Bearer ${token}` } });
+  t.after(() => reconnect.terminate());
+  await openSocket(reconnect);
+  reconnect.send(JSON.stringify({ type: "host.hello", protocolVersion: 1, hostId: "replay-host", serverId: "server-test" }));
+  await waitForSocketMessage(reconnect, (payload) => payload.type === "host.ready");
+  let staleEventDelivered = false;
+  const onMessage = (data: Buffer | ArrayBuffer | Buffer[]) => {
+    const payload = JSON.parse(Buffer.isBuffer(data) ? data.toString("utf8") : String(data)) as Record<string, unknown>;
+    if (payload.type === "participant.pending") staleEventDelivered = true;
+  };
+  reconnect.on("message", onMessage);
+  await new Promise((resolve) => setTimeout(resolve, 250));
+  reconnect.off("message", onMessage);
+  assert.equal(staleEventDelivered, false);
 });
 
 test("relay bridges a host WebSocket request without exposing host-only fields", async (t) => {

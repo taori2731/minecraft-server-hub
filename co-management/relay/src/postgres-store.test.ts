@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import { readFile, readdir } from "node:fs/promises";
 import test from "node:test";
 import { PGlite } from "@electric-sql/pglite";
 import type { QueryResultRow } from "pg";
@@ -69,10 +69,13 @@ class FaultInjectingPool implements SqlPool {
 
 async function fixture(clock: () => Date = () => new Date("2026-09-08T00:00:00.000Z")) {
   const database = new PGlite();
-  const migration = await readFile(defaultMigrationsDirectory() + "/001_initial.sql", "utf8");
-  const auditMigration = await readFile(defaultMigrationsDirectory() + "/002_audit_idempotency.sql", "utf8");
-  await database.exec(migration);
-  await database.exec(auditMigration);
+  const migrationDirectory = defaultMigrationsDirectory();
+  const migrations = (await readdir(migrationDirectory))
+    .filter((name) => /^\d{3}_[a-z0-9_-]+\.sql$/u.test(name))
+    .sort();
+  for (const migration of migrations) {
+    await database.exec(await readFile(`${migrationDirectory}/${migration}`, "utf8"));
+  }
   const pool = new PGlitePool(database);
   const key = Buffer.alloc(32, 7).toString("base64url");
   const keyring = RelayKeyring.fromEnvironment(`test-v1:${key}`);
@@ -228,7 +231,7 @@ test("PostgresRelayStore rolls back every transaction step on injected failure",
   assert.equal(auditRows.rows[0].count, "0");
 });
 
-test("PostgresRelayMaintenance retains the newest audit rows per server and only deletes expired rate limits", async (t) => {
+test("PostgresRelayMaintenance applies audit expiry, newest-row caps, and rate-limit expiry", async (t) => {
   const { database, pool } = await fixture(() => new Date("2026-09-08T00:00:00.000Z"));
   t.after(async () => database.close());
   await database.exec(`
@@ -236,8 +239,14 @@ test("PostgresRelayMaintenance retains the newest audit rows per server and only
       (host_id, server_id, actor_id, actor_display_name, action, changed_keys, result, request_id, at)
     SELECT 'host-retention', 'server-retention', 'participant-retention', 'Synthetic', 'settings.patch',
            ARRAY['maxPlayers'], 'success', 'retention-' || n,
-           TIMESTAMPTZ '2026-01-01T00:00:00Z' + (n * INTERVAL '1 second')
+           TIMESTAMPTZ '2026-09-07T00:00:00Z' + (n * INTERVAL '1 second')
     FROM generate_series(1, 10002) AS series(n);
+  `);
+  await database.exec(`
+    INSERT INTO co_management_audit
+      (host_id, server_id, actor_id, actor_display_name, action, changed_keys, result, request_id, at)
+    VALUES ('host-retention', 'server-retention', 'participant-retention', 'Synthetic', 'settings.patch',
+            ARRAY['maxPlayers'], 'success', 'retention-old', TIMESTAMPTZ '2026-01-01T00:00:00Z');
   `);
   await database.exec(`
     INSERT INTO co_management_rate_limits
@@ -246,14 +255,91 @@ test("PostgresRelayMaintenance retains the newest audit rows per server and only
   `);
 
   const maintenance = new PostgresRelayMaintenance(pool, () => new Date("2026-09-08T00:00:00.000Z"));
-  assert.deepEqual(await maintenance.run(), { auditRowsDeleted: 2, rateLimitRowsDeleted: 1 });
+  assert.deepEqual(await maintenance.run(), {
+    auditRowsDeleted: 3,
+    rateLimitRowsDeleted: 1,
+    sessionRowsDeleted: 0,
+    participantRowsDeleted: 0,
+    inviteRowsDeleted: 0,
+    operationRowsDeleted: 0,
+    snapshotRowsDeleted: 0,
+    hostServerRowsDeleted: 0,
+    hostRowsDeleted: 0,
+  });
   const remainingAudit = await database.query<{ count: string; oldest: string }>(
     "SELECT count(*)::text AS count, min(at)::text AS oldest FROM co_management_audit WHERE host_id = 'host-retention' AND server_id = 'server-retention'",
   );
   assert.equal(remainingAudit.rows[0].count, "10000");
-  assert.equal(new Date(remainingAudit.rows[0].oldest).toISOString(), "2026-01-01T00:00:03.000Z");
+  assert.equal(new Date(remainingAudit.rows[0].oldest).toISOString(), "2026-09-07T00:00:03.000Z");
   const remainingOperations = await database.query<{ count: string }>("SELECT count(*)::text AS count FROM co_management_operations");
   assert.equal(remainingOperations.rows[0].count, "0");
+});
+
+test("PostgresRelayMaintenance removes expired lifecycle rows while retaining active and running state", async (t) => {
+  const { database, pool } = await fixture(() => new Date("2026-09-08T00:00:00.000Z"));
+  t.after(async () => database.close());
+  await database.exec(`
+    INSERT INTO co_management_hosts (host_id, token_hash, registered_at, last_seen_at)
+    VALUES
+      ('host-old', repeat('a', 64), TIMESTAMPTZ '2025-01-01T00:00:00Z', TIMESTAMPTZ '2025-01-01T00:00:00Z'),
+      ('host-active', repeat('b', 64), TIMESTAMPTZ '2026-09-07T00:00:00Z', TIMESTAMPTZ '2026-09-08T00:00:00Z');
+    INSERT INTO co_management_host_servers (host_id, server_id)
+    VALUES ('host-old', 'server-old'), ('host-active', 'server-active');
+    INSERT INTO co_management_invites
+      (host_id, invite_id, server_id, secret_hash, role, issued_at, expires_at, used_at, revoked_at)
+    VALUES ('host-old', 'invite-old', 'server-old', repeat('c', 64), 'viewer',
+            TIMESTAMPTZ '2025-01-01T00:00:00Z', TIMESTAMPTZ '2025-01-02T00:00:00Z',
+            TIMESTAMPTZ '2025-01-01T00:01:00Z', NULL);
+    INSERT INTO co_management_participants
+      (host_id, participant_id, server_id, display_name, role, state, join_code_hash,
+       pending_expires_at, absolute_expires_at, created_at, approved_at, last_seen_at,
+       last_interaction_at, last_polled_at)
+    VALUES ('host-old', 'participant-old', 'server-old', 'Old', 'viewer', 'revoked', repeat('d', 64),
+            TIMESTAMPTZ '2025-01-01T00:10:00Z', TIMESTAMPTZ '2025-01-02T00:00:00Z',
+            TIMESTAMPTZ '2025-01-01T00:00:00Z', TIMESTAMPTZ '2025-01-01T00:02:00Z',
+            TIMESTAMPTZ '2025-01-01T00:02:00Z', TIMESTAMPTZ '2025-01-01T00:02:00Z', NULL),
+           ('host-active', 'participant-active', 'server-active', 'Active', 'viewer', 'approved', repeat('e', 64),
+            TIMESTAMPTZ '2026-09-09T00:10:00Z', TIMESTAMPTZ '2026-09-10T00:00:00Z',
+            TIMESTAMPTZ '2026-09-07T00:00:00Z', TIMESTAMPTZ '2026-09-07T00:01:00Z',
+            TIMESTAMPTZ '2026-09-08T00:00:00Z', TIMESTAMPTZ '2026-09-08T00:00:00Z', NULL);
+    INSERT INTO co_management_sessions
+      (session_id, host_id, participant_id, csrf_token_hash, join_code_ciphertext, key_id,
+       absolute_expires_at, idle_expires_at, created_at, last_seen_at, last_interaction_at, last_polled_at)
+    VALUES ('session-old', 'host-old', 'participant-old', repeat('f', 64), decode('00', 'hex'), 'test-v1',
+            TIMESTAMPTZ '2025-01-02T00:00:00Z', TIMESTAMPTZ '2025-01-02T00:00:00Z',
+            TIMESTAMPTZ '2025-01-01T00:00:00Z', TIMESTAMPTZ '2025-01-01T00:01:00Z',
+            TIMESTAMPTZ '2025-01-01T00:01:00Z', NULL),
+           ('session-active', 'host-active', 'participant-active', repeat('0', 64), decode('00', 'hex'), 'test-v1',
+            TIMESTAMPTZ '2026-09-10T00:00:00Z', TIMESTAMPTZ '2026-09-09T00:00:00Z',
+            TIMESTAMPTZ '2026-09-07T00:00:00Z', TIMESTAMPTZ '2026-09-08T00:00:00Z',
+            TIMESTAMPTZ '2026-09-08T00:00:00Z', NULL);
+    INSERT INTO co_management_operations
+      (host_id, server_id, participant_id, request_id, state, content_hash, result_ciphertext, key_id,
+       error_code, created_at, updated_at)
+    VALUES ('host-old', 'server-old', 'participant-old', 'operation-old', 'completed', NULL, NULL, NULL,
+            NULL, TIMESTAMPTZ '2025-01-01T00:00:00Z', TIMESTAMPTZ '2025-01-01T00:03:00Z'),
+           ('host-active', 'server-active', 'participant-active', 'operation-running', 'running', NULL, NULL, NULL,
+            NULL, TIMESTAMPTZ '2026-09-08T00:00:00Z', TIMESTAMPTZ '2026-09-08T00:00:00Z');
+    INSERT INTO co_management_snapshots (host_id, server_id, snapshot, updated_at)
+    VALUES ('host-old', 'server-old', '{}'::jsonb, TIMESTAMPTZ '2025-01-01T00:00:00Z');
+  `);
+
+  const maintenance = new PostgresRelayMaintenance(pool, () => new Date("2026-09-08T00:00:00.000Z"));
+  assert.deepEqual(await maintenance.run(), {
+    auditRowsDeleted: 0,
+    rateLimitRowsDeleted: 0,
+    sessionRowsDeleted: 1,
+    participantRowsDeleted: 1,
+    inviteRowsDeleted: 1,
+    operationRowsDeleted: 1,
+    snapshotRowsDeleted: 1,
+    hostServerRowsDeleted: 1,
+    hostRowsDeleted: 1,
+  });
+  assert.equal((await database.query<{ count: string }>("SELECT count(*)::text AS count FROM co_management_hosts WHERE host_id = 'host-old'")).rows[0].count, "0");
+  assert.equal((await database.query<{ count: string }>("SELECT count(*)::text AS count FROM co_management_hosts WHERE host_id = 'host-active'")).rows[0].count, "1");
+  assert.equal((await database.query<{ count: string }>("SELECT count(*)::text AS count FROM co_management_sessions WHERE session_id = 'session-active'")).rows[0].count, "1");
+  assert.equal((await database.query<{ count: string }>("SELECT count(*)::text AS count FROM co_management_operations WHERE request_id = 'operation-running'")).rows[0].count, "1");
 });
 
 test("PostgresRateLimiter shares counters and storage failures fail closed", async (t) => {
