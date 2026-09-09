@@ -12,6 +12,8 @@ developer-tools/src-tauri/target/
 *.key
 *.pfx
 *.p12
+!src-tauri/updater-public.key
+!developer-tools/src-tauri/updater-public.key
 __pycache__/
 *.pyc
 .DS_Store

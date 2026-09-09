@@ -3,6 +3,7 @@ name = "minecraft-server-hub-developer-tools"
 version = "0.3.1"
 description = "Controlled release and supply-chain inspection tools for Minecraft Server Hub"
 authors = ["Minecraft Server Hub contributors"]
+license = "Apache-2.0"
 edition = "2024"
 rust-version = "1.95"
 

@@ -47,3 +47,7 @@ Rustバックエンドは `cd src-tauri; cargo test`、紹介サイトは `cd we
 実サーバー作成は各公式配布元からファイルを取得します。外部配布サイトの完全な互換性を保証するものではありません。
 
 このプロジェクトはMojang Studios、Microsoft、Pocketpair、Valveの公式製品ではなく、承認・提携を受けたものではありません。公開前に仮称を独自名へ変更します。
+
+## License
+
+Minecraft Server Hub is licensed under the Apache License 2.0. See [LICENSE](LICENSE).
