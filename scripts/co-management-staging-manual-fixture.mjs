@@ -107,6 +107,15 @@ class ManualFixtureHost {
     this.socket.send(JSON.stringify(payload));
   }
 
+  publishSnapshot() {
+    this.send({
+      type: "host.snapshot",
+      protocolVersion: PROTOCOL_VERSION,
+      serverId: this.serverId,
+      snapshot: snapshot(this.serverId, this.revision, this.maxPlayers),
+    });
+  }
+
   async waitUntilReady() {
     await Promise.race([
       this.readyPromise,
@@ -205,6 +214,7 @@ class ManualFixtureHost {
       } else {
         this.maxPlayers = request.changes.maxPlayers;
         this.revision += 1;
+        this.publishSnapshot();
         const resultSettings = settings(this.serverId, this.revision, this.maxPlayers);
         result = {
           requestId: operationId,
@@ -294,7 +304,7 @@ async function main() {
     });
     await requireStatus(registration, 204, "host-registration");
     await host.waitUntilReady();
-    host.send({ type: "host.snapshot", protocolVersion: PROTOCOL_VERSION, serverId, snapshot: snapshot(serverId, 1, INITIAL_MAX_PLAYERS) });
+    host.publishSnapshot();
     await Promise.all([
       host.registerInvite({ inviteId: `manual-invite-viewer-${suffix}`, secret: viewerSecret, role: "viewer", expiresAt }),
       host.registerInvite({ inviteId: `manual-invite-editor-${suffix}`, secret: editorSecret, role: "editor", expiresAt }),

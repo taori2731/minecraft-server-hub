@@ -326,6 +326,12 @@ test("relay bridges a host WebSocket request without exposing host-only fields",
   const patched = await patchRequest;
   assert.equal(patched.statusCode, 200);
   assert.equal(JSON.stringify(patched.json()).includes("rootPath"), false);
+  const relayAudit = relay.store instanceof MemoryRelayStore
+    ? relay.store.relayAuditEntries("host-test", "server-test")
+    : [];
+  const patchAudit = relayAudit.find((entry) => entry.requestId === requestId);
+  assert.deepEqual(patchAudit?.changedKeys, ["difficulty"]);
+  assert.equal(JSON.stringify(patchAudit).includes("hard"), false);
 
   const operationQueryId = "operation-query-1234";
   relay.store.saveOperation({ requestId: operationQueryId, hostId: "host-test", serverId: "server-test", participantId: body.session.participantId, contentHash: "c".repeat(64), state: "running", updatedAt: new Date().toISOString() });

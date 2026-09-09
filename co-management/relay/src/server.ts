@@ -20,6 +20,7 @@ import {
   hashRelaySecret,
   type OperationRecord,
   type ParticipantRecord,
+  type RelayAuditInput,
   type RelayStore,
 } from "./store.ts";
 import {
@@ -121,6 +122,7 @@ interface PendingHostRequest {
   participantId: string;
   operationId?: string;
   contentHash?: string;
+  audit?: RelayAuditInput;
   timeoutTimer: NodeJS.Timeout;
   cleanupTimer: NodeJS.Timeout;
   timedOut: boolean;
@@ -375,6 +377,26 @@ function operationRecord(
   };
 }
 
+function settingsAudit(
+  participant: ParticipantRecord,
+  serverId: string,
+  requestId: string,
+  changedKeys: string[],
+  result: "success" | "failure",
+): RelayAuditInput {
+  return {
+    hostId: participant.hostId,
+    serverId,
+    actorId: participant.participantId,
+    actorDisplayName: participant.displayName,
+    action: "settings.patch",
+    changedKeys: [...changedKeys],
+    result,
+    requestId,
+    at: new Date().toISOString(),
+  };
+}
+
 function parseHostOperationStatus(value: unknown, expectedRequestId: string): CoManagementOperationResult {
   const object = asObject(value);
   const state = object?.state;
@@ -474,6 +496,7 @@ export function createRelayServer(options: RelayServerOptions = {}): RelayServer
     payload: JsonObject,
     operationId?: string,
     contentHash?: string,
+    audit?: RelayAuditInput,
   ): Promise<unknown> => {
     const socket = sockets.get(hostId);
     if (!socket || socket.readyState !== WebSocket.OPEN) {
@@ -511,6 +534,7 @@ export function createRelayServer(options: RelayServerOptions = {}): RelayServer
         participantId,
         operationId,
         contentHash,
+        audit,
         timeoutTimer,
         cleanupTimer,
         timedOut: false,
@@ -711,6 +735,8 @@ export function createRelayServer(options: RelayServerOptions = {}): RelayServer
       reply.code(403).send({ error: "session-not-authorized" });
       return;
     }
+    const auditSuccess = settingsAudit(participant, request.params.serverId, body.requestId as string, Object.keys(changes), "success");
+    const auditFailure = settingsAudit(participant, request.params.serverId, body.requestId as string, Object.keys(changes), "failure");
     const contentHash = operationContentHash(
       request.params.serverId,
       participant.participantId,
@@ -755,7 +781,7 @@ export function createRelayServer(options: RelayServerOptions = {}): RelayServer
             state: "failed",
             errorCode: hostOperation.errorCode ?? "host-operation-failed",
             updatedAt: new Date().toISOString(),
-          });
+          }, auditFailure);
           reply.code(502).send({ error: operation.errorCode ?? "host-operation-failed" });
           return;
         }
@@ -768,7 +794,7 @@ export function createRelayServer(options: RelayServerOptions = {}): RelayServer
           state: "completed",
           result: hostOperation.result,
           updatedAt: new Date().toISOString(),
-        });
+        }, auditSuccess);
         reply.send({ result: operation.result });
       } catch (error) {
         if (error instanceof HostRequestError && error.code === "host-timeout") {
@@ -801,6 +827,7 @@ export function createRelayServer(options: RelayServerOptions = {}): RelayServer
         },
         body.requestId,
         contentHash,
+        auditSuccess,
       );
       assertNoSensitiveKeys(result);
       await store.saveOperation({
@@ -812,7 +839,7 @@ export function createRelayServer(options: RelayServerOptions = {}): RelayServer
         state: "completed",
         result,
         updatedAt: new Date().toISOString(),
-      });
+      }, auditSuccess);
       reply.send({ result });
     } catch (error) {
       if (error instanceof HostRequestError && error.code === "host-timeout") {
@@ -918,6 +945,16 @@ export function createRelayServer(options: RelayServerOptions = {}): RelayServer
         result: hostOperation.state === "completed" ? hostOperation.result : undefined,
         errorCode: hostOperation.state === "failed" ? hostOperation.errorCode ?? "host-operation-failed" : undefined,
         updatedAt: new Date().toISOString(),
+      }, {
+        hostId: participant.hostId,
+        serverId: session.serverId,
+        actorId: participant.participantId,
+        actorDisplayName: participant.displayName,
+        action: "settings.patch",
+        changedKeys: [],
+        result: hostOperation.state === "completed" ? "success" : "failure",
+        requestId: request.params.requestId,
+        at: new Date().toISOString(),
       });
       reply.send({ operation });
     } catch (error) {
@@ -1091,7 +1128,7 @@ export function createRelayServer(options: RelayServerOptions = {}): RelayServer
           assertNoSensitiveKeys(response.result);
           if (waiting.operationId) {
             try {
-              await store.saveOperation(operationRecord(waiting, response));
+              await store.saveOperation(operationRecord(waiting, response), waiting.audit);
             } catch (error) {
               waiting.reject(error instanceof Error ? error : new RelayStorageUnavailableError(error));
               throw error;
@@ -1107,6 +1144,15 @@ export function createRelayServer(options: RelayServerOptions = {}): RelayServer
           }
           if (type === "participant.approved") await store.approveParticipant(authenticatedHostId, serverId, participant.participantId);
           else await store.revokeParticipant(authenticatedHostId, serverId, participant.participantId);
+          await store.appendAudit({
+            hostId: authenticatedHostId,
+            serverId,
+            actorId: authenticatedHostId,
+            actorDisplayName: "Host",
+            action: type,
+            changedKeys: [],
+            result: "success",
+          });
         } else {
           throw new RelayError(1008, "message-not-allowed");
         }

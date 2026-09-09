@@ -96,6 +96,19 @@ npm run test:co-management:staging
 - Viewerの設定申請が無効であること、Editorの確認画面で`20 → 24`を表示し、`rev. 2`と監査行へ反映されることを確認。
 - ホストWSS切断後、両ブラウザが「参加セッションが終了しました」へ遷移することを確認。
 
+### PostgreSQL監査の保守
+
+リレーアプリケーションのDBロールには、通常の要求処理に必要なテーブルの読取・追加・更新だけを与え、監査削除権限は与えない。別の保守ロールを`MSH_CO_MANAGEMENT_MAINTENANCE_DATABASE_URL`へ設定し、期限切れレート制限と、各ホスト・サーバー単位で最新10,000件を残す90日超の監査メタデータだけを定期的に削除する。
+
+Neon等の管理PostgreSQLでは、実際のロール名を決めたうえで、リレー用接続ユーザーから`co_management_audit`と`co_management_rate_limits`の`DELETE`を剥奪し、保守用接続ユーザーへその2表の`DELETE`と必要な読取権限だけを付与する。ロール作成・権限変更はDB所有者の管理画面またはSQLコンソールで行い、アプリ起動時には実行しない。
+
+```powershell
+$env:MSH_CO_MANAGEMENT_MAINTENANCE_DATABASE_URL = "<maintenance-role-connection-string>"
+npm --prefix co-management/relay run maintenance
+```
+
+このコマンドは監査メタデータとレート制限行だけを対象にし、操作結果、参加者、設定スナップショット、進行中操作の行を削除しない。接続障害や権限不足時は成功扱いにせず終了する。接続文字列はログへ出さない。
+
 秘密値は合成してメモリ内だけで扱い、試験出力・スクリーンショットへ記録しない。初期未認証の`/api/v1/session` 401と、切断直後の設定API 403/502は想定遷移としてURL・ステータスを限定して扱い、それ以外のブラウザconsole/page errorは失敗にする。これは物理スマートフォン、別回線、手動2ブラウザ、実ゲームの受入ではない。Playwrightは通常のブラウザ実行であり、Codex Browserプラグインはこの環境で利用できないため使用していない。
 
 ## Cloudflare DNSを追加する条件

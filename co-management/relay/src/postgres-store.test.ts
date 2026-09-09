@@ -5,6 +5,7 @@ import { PGlite } from "@electric-sql/pglite";
 import type { QueryResultRow } from "pg";
 import { defaultMigrationsDirectory } from "./migrations.ts";
 import {
+  PostgresRelayMaintenance,
   PostgresRateLimiter,
   PostgresRelayStore,
   RelayStorageUnavailableError,
@@ -40,7 +41,9 @@ class PGlitePool implements SqlPool {
 async function fixture(clock: () => Date = () => new Date("2026-09-08T00:00:00.000Z")) {
   const database = new PGlite();
   const migration = await readFile(defaultMigrationsDirectory() + "/001_initial.sql", "utf8");
+  const auditMigration = await readFile(defaultMigrationsDirectory() + "/002_audit_idempotency.sql", "utf8");
   await database.exec(migration);
+  await database.exec(auditMigration);
   const pool = new PGlitePool(database);
   const key = Buffer.alloc(32, 7).toString("base64url");
   const keyring = RelayKeyring.fromEnvironment(`test-v1:${key}`);
@@ -97,7 +100,18 @@ test("PostgresRelayStore scopes idempotency and encrypts persisted operation res
     result: { status: "saved", syntheticSecret: "DO-NOT-PERSIST-PLAINTEXT" },
     updatedAt: "2026-09-08T00:01:00.000Z",
   };
-  await store.saveOperation(operation);
+  const audit = {
+    hostId: operation.hostId,
+    serverId: operation.serverId,
+    actorId: operation.participantId,
+    actorDisplayName: "Takeru",
+    action: "settings.patch",
+    changedKeys: ["maxPlayers"],
+    result: "success" as const,
+    requestId: operation.requestId,
+    at: "2026-09-08T00:01:00.000Z",
+  };
+  await store.saveOperation(operation, audit);
   assert.deepEqual((await store.operation("host-test", "server-test", redeemed.session.participantId, operation.requestId))?.result, operation.result);
   await assert.rejects(
     () => store.saveOperation({ ...operation, contentHash: "e".repeat(64) }),
@@ -105,6 +119,40 @@ test("PostgresRelayStore scopes idempotency and encrypts persisted operation res
   );
   const raw = await database.query<{ encoded: string }>("SELECT encode(result_ciphertext, 'hex') AS encoded FROM co_management_operations");
   assert.equal(raw.rows[0].encoded.includes(Buffer.from("DO-NOT-PERSIST-PLAINTEXT").toString("hex")), false);
+  const auditRows = await database.query<{ count: string; changed_keys: string[] }>("SELECT count(*)::text AS count, changed_keys FROM co_management_audit GROUP BY changed_keys");
+  assert.equal(auditRows.rows[0].count, "1");
+  assert.deepEqual(auditRows.rows[0].changed_keys, ["maxPlayers"]);
+  await store.saveOperation(operation, audit);
+  const auditCount = await database.query<{ count: string }>("SELECT count(*)::text AS count FROM co_management_audit");
+  assert.equal(auditCount.rows[0].count, "1");
+});
+
+test("PostgresRelayMaintenance retains the newest audit rows per server and only deletes expired rate limits", async (t) => {
+  const { database, pool } = await fixture(() => new Date("2026-09-08T00:00:00.000Z"));
+  t.after(async () => database.close());
+  await database.exec(`
+    INSERT INTO co_management_audit
+      (host_id, server_id, actor_id, actor_display_name, action, changed_keys, result, request_id, at)
+    SELECT 'host-retention', 'server-retention', 'participant-retention', 'Synthetic', 'settings.patch',
+           ARRAY['maxPlayers'], 'success', 'retention-' || n,
+           TIMESTAMPTZ '2026-01-01T00:00:00Z' + (n * INTERVAL '1 second')
+    FROM generate_series(1, 10002) AS series(n);
+  `);
+  await database.exec(`
+    INSERT INTO co_management_rate_limits
+      (identifier_hash, bucket_started_at, request_count, expires_at)
+    VALUES (repeat('a', 64), TIMESTAMPTZ '2026-01-01T00:00:00Z', 1, TIMESTAMPTZ '2026-01-01T00:01:00Z');
+  `);
+
+  const maintenance = new PostgresRelayMaintenance(pool, () => new Date("2026-09-08T00:00:00.000Z"));
+  assert.deepEqual(await maintenance.run(), { auditRowsDeleted: 2, rateLimitRowsDeleted: 1 });
+  const remainingAudit = await database.query<{ count: string; oldest: string }>(
+    "SELECT count(*)::text AS count, min(at)::text AS oldest FROM co_management_audit WHERE host_id = 'host-retention' AND server_id = 'server-retention'",
+  );
+  assert.equal(remainingAudit.rows[0].count, "10000");
+  assert.equal(new Date(remainingAudit.rows[0].oldest).toISOString(), "2026-01-01T00:00:03.000Z");
+  const remainingOperations = await database.query<{ count: string }>("SELECT count(*)::text AS count FROM co_management_operations");
+  assert.equal(remainingOperations.rows[0].count, "0");
 });
 
 test("PostgresRateLimiter shares counters and storage failures fail closed", async (t) => {
@@ -130,4 +178,5 @@ test("PostgresRateLimiter shares counters and storage failures fail closed", asy
   assert.equal(response.statusCode, 503);
   assert.deepEqual(response.json(), { error: "relay-storage-unavailable" });
   await assert.rejects(() => new PostgresRelayStore(failingPool, RelayKeyring.fromEnvironment(`test-v1:${Buffer.alloc(32, 9).toString("base64url")}`)).hasHost("host-test"), RelayStorageUnavailableError);
+  await assert.rejects(() => new PostgresRelayMaintenance(failingPool).run(), RelayStorageUnavailableError);
 });

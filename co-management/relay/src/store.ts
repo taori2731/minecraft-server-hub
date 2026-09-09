@@ -8,6 +8,8 @@ import type {
 
 export const SESSION_ABSOLUTE_MS = 12 * 60 * 60 * 1_000;
 export const SESSION_IDLE_MS = 30 * 60 * 1_000;
+export const AUDIT_RETENTION_MS = 90 * 24 * 60 * 60 * 1_000;
+export const AUDIT_MAX_ROWS_PER_SCOPE = 10_000;
 
 export interface HostRecord {
   hostId: string;
@@ -79,6 +81,25 @@ export interface OperationRecord {
   updatedAt: string;
 }
 
+/**
+ * Operational relay audit metadata. The host remains authoritative for the
+ * user-visible before/after audit. The relay copy intentionally contains only
+ * safe field names and outcomes, never setting values or credentials.
+ */
+export interface RelayAuditRecord {
+  hostId: string;
+  serverId: string;
+  actorId: string;
+  actorDisplayName: string;
+  action: string;
+  changedKeys: string[];
+  result: "success" | "failure";
+  requestId?: string;
+  at: string;
+}
+
+export type RelayAuditInput = Omit<RelayAuditRecord, "at"> & { at?: string };
+
 export type Awaitable<T> = T | Promise<T>;
 
 export interface RelayStore {
@@ -103,13 +124,14 @@ export interface RelayStore {
   ): Awaitable<SessionRecord>;
   setSnapshot(hostId: string, snapshot: PublicServerSnapshot): Awaitable<void>;
   snapshot(hostId: string, serverId: string): Awaitable<PublicServerSnapshot | undefined>;
-  saveOperation(record: OperationRecord): Awaitable<OperationRecord>;
+  saveOperation(record: OperationRecord, audit?: RelayAuditInput): Awaitable<OperationRecord>;
   operation(
     hostId: string,
     serverId: string,
     participantId: string,
     requestId: string,
   ): Awaitable<OperationRecord | undefined>;
+  appendAudit(entry: RelayAuditInput): Awaitable<void>;
   disconnectHost(hostId: string): Awaitable<void>;
   closeSession(sessionId: string): Awaitable<void>;
 }
@@ -141,6 +163,23 @@ function key(...parts: string[]): string {
   return parts.join("\u001f");
 }
 
+export function normalizeAudit(input: RelayAuditInput, now: string): RelayAuditRecord {
+  const values = [input.hostId, input.serverId, input.actorId, input.actorDisplayName, input.action];
+  if (values.some((value) => typeof value !== "string" || value.length === 0 || value.length > 256 || /[\u0000-\u001f\u007f]/u.test(value))) {
+    throw new Error("invalid-audit-entry");
+  }
+  if (!Array.isArray(input.changedKeys) || input.changedKeys.length > 32 || input.changedKeys.some((value) => typeof value !== "string" || value.length === 0 || value.length > 128 || /[\u0000-\u001f\u007f]/u.test(value))) {
+    throw new Error("invalid-audit-entry");
+  }
+  if (input.result !== "success" && input.result !== "failure") throw new Error("invalid-audit-entry");
+  if (input.requestId !== undefined && (typeof input.requestId !== "string" || input.requestId.length === 0 || input.requestId.length > 128 || /[\u0000-\u001f\u007f]/u.test(input.requestId))) {
+    throw new Error("invalid-audit-entry");
+  }
+  const at = input.at ?? now;
+  if (!Number.isFinite(Date.parse(at))) throw new Error("invalid-audit-entry");
+  return { ...input, changedKeys: [...input.changedKeys], at };
+}
+
 export function hashRelaySecret(value: string): string {
   return sha256(value);
 }
@@ -153,6 +192,7 @@ export class MemoryRelayStore implements RelayStore {
   private readonly sessions = new Map<string, SessionRecord>();
   private readonly snapshots = new Map<string, PublicServerSnapshot>();
   private readonly operations = new Map<string, OperationRecord>();
+  private audits: RelayAuditRecord[] = [];
 
   constructor(private readonly clock: () => Date = () => new Date()) {}
 
@@ -392,7 +432,7 @@ export class MemoryRelayStore implements RelayStore {
     return snapshot ? clone(snapshot) : undefined;
   }
 
-  saveOperation(record: OperationRecord): OperationRecord {
+  saveOperation(record: OperationRecord, audit?: RelayAuditInput): OperationRecord {
     const operationKey = this.operationKey(record.hostId, record.serverId, record.participantId, record.requestId);
     const existing = this.operations.get(operationKey);
     if (existing?.contentHash && record.contentHash && !constantTimeEqual(existing.contentHash, record.contentHash)) {
@@ -401,6 +441,7 @@ export class MemoryRelayStore implements RelayStore {
     // A timeout is uncertain. Never replace a final result with a retry's
     // `running` marker.
     if (existing && existing.state !== "running" && record.state === "running") return clone(existing);
+    if (audit && record.state !== "running") this.appendAudit(audit);
     const stored = { ...record, contentHash: record.contentHash ?? existing?.contentHash };
     this.operations.set(operationKey, clone(stored));
     return clone(stored);
@@ -409,6 +450,43 @@ export class MemoryRelayStore implements RelayStore {
   operation(hostId: string, serverId: string, participantId: string, requestId: string): OperationRecord | undefined {
     const operation = this.operations.get(this.operationKey(hostId, serverId, participantId, requestId));
     return operation ? clone(operation) : undefined;
+  }
+
+  appendAudit(entry: RelayAuditInput): void {
+    const normalized = normalizeAudit(entry, this.now());
+    if (normalized.requestId && this.audits.some((candidate) =>
+      candidate.requestId === normalized.requestId
+      && candidate.hostId === normalized.hostId
+      && candidate.serverId === normalized.serverId
+      && candidate.action === normalized.action,
+    )) return;
+    this.audits.push(clone(normalized));
+  }
+
+  /** Test/diagnostic view; the browser audit endpoint reads the host's authoritative log. */
+  relayAuditEntries(hostId: string, serverId: string): RelayAuditRecord[] {
+    return this.audits
+      .filter((entry) => entry.hostId === hostId && entry.serverId === serverId)
+      .map((entry) => clone(entry));
+  }
+
+  pruneAudit(at = this.now()): number {
+    const cutoff = Date.parse(at) - AUDIT_RETENTION_MS;
+    const grouped = new Map<string, Array<{ index: number; at: number }>>();
+    this.audits.forEach((entry, index) => {
+      const scope = key(entry.hostId, entry.serverId);
+      const rows = grouped.get(scope) ?? [];
+      rows.push({ index, at: Date.parse(entry.at) });
+      grouped.set(scope, rows);
+    });
+    const keep = new Set<number>();
+    for (const rows of grouped.values()) {
+      rows.sort((left, right) => right.at - left.at || right.index - left.index);
+      for (const row of rows.slice(0, AUDIT_MAX_ROWS_PER_SCOPE)) keep.add(row.index);
+    }
+    const before = this.audits.length;
+    this.audits = this.audits.filter((entry, index) => keep.has(index) || Date.parse(entry.at) >= cutoff);
+    return before - this.audits.length;
   }
 
   disconnectHost(hostId: string): void {

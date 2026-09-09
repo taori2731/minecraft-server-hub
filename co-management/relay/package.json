@@ -8,6 +8,7 @@
   "scripts": {
     "check": "tsc --noEmit",
     "migrate": "tsx src/migrate.ts",
+    "maintenance": "tsx src/maintenance.ts",
     "test": "tsx --test src/*.test.ts",
     "start": "tsx src/server.ts",
     "start:production": "npm run migrate && npm start"

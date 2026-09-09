@@ -41,4 +41,4 @@ HTTPの非ループバック接続はRust側で拒否します。localhostの統
 
 ローカル開発は `MemoryRelayStore`、PostgreSQL接続情報とリレー鍵を指定した環境は `PostgresRelayStore` を使用します。番号付きマイグレーションは `relay/migrations/` にあり、`npm --prefix co-management/relay run migrate` で適用します。アプリ起動時はマイグレーションの名前とチェックサムを検証し、不足・改変時は起動を停止します。
 
-PostgreSQLアダプターは複合キーによるホスト・サーバー・参加者・操作の分離、招待の原子的な1回引換、暗号化した照合コードと操作結果、共有レート制限を実装します。ステージングではNeonへのマイグレーションと`/health/ready`を確認済みです。DB接続障害時は503またはWebSocket 1013で停止し、Memory Storeへフォールバックしませんが、障害注入・復帰、監査保持・削除の実DB受入は未完了です。残りの受入項目は `docs/CO_MANAGEMENT_STAGING_RUNBOOK.md` に記録しています。
+PostgreSQLアダプターは複合キーによるホスト・サーバー・参加者・操作の分離、招待の原子的な1回引換、暗号化した照合コードと操作結果、共有レート制限を実装します。設定操作の完了結果と同じトランザクションで、値を含まないリレー運用監査メタデータも保存します。監査の保持削除と期限切れレート制限の整理は、アプリケーションDB権限と分離した`MSH_CO_MANAGEMENT_MAINTENANCE_DATABASE_URL`を使う`npm --prefix co-management/relay run maintenance`で行います。ステージングではNeonへのマイグレーションと`/health/ready`を確認済みですが、障害注入・復帰、監査保持・削除の実DB受入は未完了です。残りの受入項目は `docs/CO_MANAGEMENT_STAGING_RUNBOOK.md` に記録しています。

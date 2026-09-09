@@ -3,14 +3,19 @@ import type { QueryResultRow } from "pg";
 import type { PublicServerSnapshot, SessionView } from "../../shared/protocol.ts";
 import { RelayKeyring } from "./relay-crypto.ts";
 import {
+  AUDIT_MAX_ROWS_PER_SCOPE,
+  AUDIT_RETENTION_MS,
   SESSION_ABSOLUTE_MS,
   SESSION_IDLE_MS,
   type InviteRecord,
   type OperationRecord,
   type ParticipantRecord,
   type RedeemedInvite,
+  type RelayAuditInput,
+  type RelayAuditRecord,
   type RelayStore,
   type SessionRecord,
+  normalizeAudit,
 } from "./store.ts";
 
 export interface SqlConnection {
@@ -95,6 +100,7 @@ const STORE_ERRORS = new Set([
   "editor-required",
   "snapshot-too-large",
   "request-id-reused",
+  "invalid-audit-entry",
   "relay-key-unavailable",
   "relay-ciphertext-invalid",
 ]);
@@ -127,6 +133,16 @@ function optionalIso(value: string | Date | null): string | undefined {
 
 function asBuffer(value: Buffer | Uint8Array): Buffer {
   return Buffer.isBuffer(value) ? value : Buffer.from(value);
+}
+
+async function insertAudit(client: SqlConnection, entry: RelayAuditRecord): Promise<void> {
+  await client.query(
+    `INSERT INTO co_management_audit
+       (host_id, server_id, actor_id, actor_display_name, action, changed_keys, result, request_id, at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+     ON CONFLICT (host_id, server_id, action, request_id) WHERE request_id IS NOT NULL DO NOTHING`,
+    [entry.hostId, entry.serverId, entry.actorId, entry.actorDisplayName, entry.action, entry.changedKeys, entry.result, entry.requestId ?? null, entry.at],
+  );
 }
 
 function participantFromRow(row: ParticipantRow): ParticipantRecord {
@@ -549,7 +565,7 @@ export class PostgresRelayStore implements RelayStore {
     };
   }
 
-  async saveOperation(record: OperationRecord): Promise<OperationRecord> {
+  async saveOperation(record: OperationRecord, audit?: RelayAuditInput): Promise<OperationRecord> {
     return this.run(async () => this.transaction(async (client) => {
       const existingResult = await client.query<OperationRow>(
         `SELECT request_id, server_id, host_id, participant_id, content_hash, state,
@@ -584,6 +600,9 @@ export class PostgresRelayStore implements RelayStore {
                    result_ciphertext, error_code, updated_at`,
         [record.hostId, record.serverId, record.participantId, record.requestId, record.state, contentHash, resultCiphertext, keyId, record.errorCode ?? null, timestamp],
       );
+      if (audit && record.state !== "running") {
+        await insertAudit(client, normalizeAudit(audit, timestamp));
+      }
       return this.operationFromRow(saved.rows[0]);
     }));
   }
@@ -598,6 +617,12 @@ export class PostgresRelayStore implements RelayStore {
         [hostId, serverId, participantId, requestId],
       );
       return result.rows[0] ? this.operationFromRow(result.rows[0]) : undefined;
+    });
+  }
+
+  async appendAudit(entry: RelayAuditInput): Promise<void> {
+    await this.run(async () => {
+      await insertAudit(this.pool, normalizeAudit(entry, this.now()));
     });
   }
 
@@ -622,6 +647,69 @@ export class PostgresRelayStore implements RelayStore {
 
 export interface SharedRateLimiter {
   consume(identifier: string, limit: number, windowMs: number): Promise<boolean>;
+}
+
+export interface RelayMaintenanceResult {
+  auditRowsDeleted: number;
+  rateLimitRowsDeleted: number;
+}
+
+/**
+ * Destructive retention work is deliberately separated from the application
+ * store. Run this with a maintenance-only database role; the relay role only
+ * needs the INSERT/SELECT permissions used during request handling.
+ */
+export class PostgresRelayMaintenance {
+  constructor(
+    private readonly pool: SqlPool,
+    private readonly clock: () => Date = () => new Date(),
+  ) {}
+
+  async run(): Promise<RelayMaintenanceResult> {
+    try {
+      const client = await this.pool.connect();
+      try {
+        await client.query("BEGIN");
+        const now = this.clock();
+        const auditResult = await client.query(
+          `WITH ranked AS (
+             SELECT audit_id, at,
+                    row_number() OVER (
+                      PARTITION BY host_id, server_id
+                      ORDER BY at DESC, audit_id DESC
+                    ) AS row_number
+             FROM co_management_audit
+           )
+           DELETE FROM co_management_audit audit
+           USING ranked
+           WHERE audit.audit_id = ranked.audit_id
+             AND ranked.row_number > $2
+             AND ranked.at < $1`,
+          [new Date(now.getTime() - AUDIT_RETENTION_MS).toISOString(), AUDIT_MAX_ROWS_PER_SCOPE],
+        );
+        const rateLimitResult = await client.query(
+          "DELETE FROM co_management_rate_limits WHERE expires_at <= $1",
+          [now.toISOString()],
+        );
+        await client.query("COMMIT");
+        return {
+          auditRowsDeleted: auditResult.rowCount ?? 0,
+          rateLimitRowsDeleted: rateLimitResult.rowCount ?? 0,
+        };
+      } catch (error) {
+        try {
+          await client.query("ROLLBACK");
+        } catch {
+          // Preserve the original failure; the caller will stop the job.
+        }
+        throw error;
+      } finally {
+        client.release?.();
+      }
+    } catch (error) {
+      throw new RelayStorageUnavailableError(error);
+    }
+  }
 }
 
 export class PostgresRateLimiter implements SharedRateLimiter {
