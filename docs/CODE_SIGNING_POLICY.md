@@ -42,3 +42,5 @@ The developer-tools dependency/advisory checks are development and release check
 ## Release gate
 
 An unsigned installer may be used for local QA only. It must not be represented as a trusted public release. The current release procedure remains the authoritative checklist for Tauri updater key rotation, Authenticode verification, artifact hashes, and clean-environment acceptance.
+
+Existing releases and installed versions must be migrated before changing the embedded updater public key. Follow the [updater key rotation migration procedure](UPDATER_KEY_ROTATION_MIGRATION.md); do not replace a public key in source control without a tested manual bootstrap or equivalent transition path.

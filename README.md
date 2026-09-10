@@ -50,7 +50,7 @@ Rustバックエンドは `cd src-tauri; cargo test`、紹介サイトは `cd we
 
 ## Code signing policy
 
-Free code signing provided by SignPath.io, certificate by SignPath Foundation (application pending). See the [Code signing policy](docs/CODE_SIGNING_POLICY.md). Until a signed release is published, installers may remain unsigned and are for local QA only.
+Free code signing provided by SignPath.io, certificate by SignPath Foundation (application pending). See the [Code signing policy](docs/CODE_SIGNING_POLICY.md) and the [updater key rotation migration procedure](docs/UPDATER_KEY_ROTATION_MIGRATION.md). Until a signed release is published, installers may remain unsigned and are for local QA only.
 
 ## License
 
