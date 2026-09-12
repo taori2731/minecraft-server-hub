@@ -57,5 +57,7 @@ $outputDirectory = Split-Path -Parent $OutputPath
 if ($outputDirectory -and -not (Test-Path -LiteralPath $outputDirectory)) {
     New-Item -ItemType Directory -Path $outputDirectory | Out-Null
 }
-$manifest | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $OutputPath -Encoding utf8
+$manifestJson = $manifest | ConvertTo-Json -Depth 5
+$resolvedOutputPath = [System.IO.Path]::GetFullPath($OutputPath)
+[System.IO.File]::WriteAllText($resolvedOutputPath, $manifestJson, [System.Text.UTF8Encoding]::new($false))
 Write-Output "Created signed update manifest: $OutputPath"
