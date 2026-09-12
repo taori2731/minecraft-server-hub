@@ -1,8 +1,8 @@
 export type DeliveryStatus = "implemented" | "conditional" | "developing";
 
 export const releaseStatus = {
-  version: "開発版 0.3.2",
-  updatedAt: "2026-08-31",
+  version: "開発版 0.3.10",
+  updatedAt: "2026-09-12",
   download: "一般公開準備中",
   groups: [
     { status: "implemented" as DeliveryStatus, label: "実装済み", items: [
@@ -25,7 +25,6 @@ export const releaseStatus = {
     { status: "developing" as DeliveryStatus, label: "開発中・未接続", items: [
       ["Pro／サポーター版", "一括操作、ローカル監視、履歴、外観などは開発版で動作。価格、決済、ライセンス認証、提供条件は未接続"],
       ["予約バックアップ", "複数世代を扱う基盤はありますが、予約UIと本番運用の検証は開発中"],
-      ["共同管理", "ブラウザ遠隔管理と共同管理の画面は現行版に含めていません"],
       ["一般配布", "正式名称、コード署名、公開URL、一般利用者環境でのインストール検証が未完了"],
     ]},
   ],

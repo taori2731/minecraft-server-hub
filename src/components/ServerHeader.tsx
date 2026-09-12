@@ -13,15 +13,16 @@ interface Props {
   onStart: () => void;
   onStop: () => void;
   onRestart: () => void;
+  compact?: boolean;
 }
 
-export function ServerHeader({ server, serverIcon, status, busyAction, onStart, onStop, onRestart }: Props) {
+export function ServerHeader({ server, serverIcon, status, busyAction, onStart, onStop, onRestart, compact = false }: Props) {
   const { t } = useI18n();
   const stateText = { running: t("running"), starting: t("starting"), stopping: t("stopping"), stopped: t("stopped"), crashed: t("crashed") } as const;
   const running = status.state === "running" || status.state === "starting";
   const visibleBuild = server.serverType === "bedrock" || isPalworldServer(server) ? "" : server.distributionBuild ? ` build ${server.distributionBuild}` : "";
   return (
-    <section className="server-hero">
+    <section className={`server-hero${compact ? " compact" : ""}`}>
       <ServerIcon source={serverIcon} className="server-art" />
       <div className="server-heading">
         <h1>{server.name}</h1>

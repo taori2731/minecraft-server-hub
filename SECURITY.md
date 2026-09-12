@@ -13,7 +13,6 @@ Only the current `main` branch and the latest published release are actively rev
 ## Security boundaries
 
 - The desktop application is Windows-first and keeps game settings, local process control, and host credentials on the host PC.
-- The optional browser co-management relay is a separate service. Production deployments must use HTTPS/WSS, secure cookies, CSRF and Origin checks, persistent PostgreSQL storage, and separate maintenance credentials as described in `docs/CO_MANAGEMENT_STAGING_RUNBOOK.md`.
 - Palworld management passwords and recovery data must not be copied into issues, logs, SQLite exports, GitHub Actions output, or public artifacts.
 - The repository's updater public keys are safe to publish. Updater private keys, SignPath tokens, database credentials, and certificate material must remain in an approved secret store.
 

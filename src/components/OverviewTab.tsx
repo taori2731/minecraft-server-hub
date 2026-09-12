@@ -35,7 +35,6 @@ export function OverviewTab({ server, status, logs, onCopyAddress, onOpenFolder,
   const latency = status.pingLatencyMs == null ? running ? "計測中" : "—" : status.pingLatencyMs === 0 ? "<1 ms" : `${status.pingLatencyMs} ms`;
   return (
     <div className="tab-content overview-content">
-      <NextStepsCard server={server} onNavigate={onNavigate} onInvite={onInvite}/>
       <div className="metric-grid">
         <article className="metric-card">
           <div className="metric-label"><Icon name="server" /><span>サーバーアドレス</span></div>
@@ -65,6 +64,7 @@ export function OverviewTab({ server, status, logs, onCopyAddress, onOpenFolder,
         <div><span>ローカル応答</span><strong>{latency}</strong><small>チャンク数はMinecraft共通APIがないため非表示</small></div>
       </section>
 
+      <div className="overview-detail-grid">
       <section className="recent-panel">
         <header><h2>最近のログ</h2><button className="small-button" type="button" onClick={onOpenFolder}><Icon name="folder" size={17} />ワールドフォルダーを開く</button></header>
         <div className="recent-log-list">
@@ -72,6 +72,8 @@ export function OverviewTab({ server, status, logs, onCopyAddress, onOpenFolder,
           {logs.length === 0 ? <div className="empty-log">サーバーを起動すると、ここに最近のログが表示されます。</div> : null}
         </div>
       </section>
+      <NextStepsCard key={server.id} server={server} onNavigate={onNavigate} onInvite={onInvite}/>
+      </div>
       <OperationsPanel server={server} status={status} onUpdated={onUpdated} notify={notify} fail={fail} />
     </div>
   );

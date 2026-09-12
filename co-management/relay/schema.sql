@@ -1,5 +1,0 @@
--- Reference entrypoint only.
---
--- Production and staging databases must be changed exclusively by the
--- numbered SQL files under migrations/ through `npm run migrate`.
--- The current complete schema starts at migrations/001_initial.sql.

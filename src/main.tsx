@@ -4,6 +4,7 @@ import App from "./App";
 import { detectSystemLocale, readLanguagePreference, type AppLocale } from "./lib/i18n";
 import { loadTranslationCatalog } from "./lib/translationCatalog";
 import "./styles/app.css";
+import "./styles/workspace.css";
 
 async function bootstrap() {
   const preference = readLanguagePreference();

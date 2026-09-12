@@ -4,6 +4,7 @@ import { OverviewTab } from "./components/OverviewTab";
 import { OperationOverlay } from "./components/OperationOverlay";
 import { monitoringWarnings, readMonitoring } from "./components/ProOperationsPanel";
 import { ServerHeader } from "./components/ServerHeader";
+import { HomeHub } from "./components/HomeHub";
 import { Sidebar } from "./components/Sidebar";
 import { backend, confirmDanger, selectLogDestination } from "./lib/backend";
 import { ExternalLinkHandler } from "./components/ExternalLinkHandler";
@@ -34,7 +35,6 @@ const OperationsCenterTab = lazy(() => import("./components/OperationsCenterTab"
 const PalworldOverviewTab = lazy(() => import("./components/PalworldOverviewTab").then((module) => ({ default: module.PalworldOverviewTab })));
 const PalworldPlayersTab = lazy(() => import("./components/PalworldPlayersTab").then((module) => ({ default: module.PalworldPlayersTab })));
 const PalworldSettingsTab = lazy(() => import("./components/PalworldSettingsTab").then((module) => ({ default: module.PalworldSettingsTab })));
-const CoManagementDialog = lazy(() => import("./components/CoManagementDialog").then((module) => ({ default: module.CoManagementDialog })));
 
 function preloadTabModule(tab: TabId, palworld: boolean) {
   if (tab === "console") return import("./components/ConsoleTab");
@@ -118,11 +118,14 @@ export function AppContent() {
   const [statuses, setStatuses] = useState<Record<string, RuntimeStatus>>({});
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [activeTab, setActiveTab] = useState<TabId>("overview");
+  const workspaceRef = useRef<HTMLElement>(null);
+  useEffect(() => {
+    if (workspaceRef.current) workspaceRef.current.scrollTop = 0;
+  }, [activeTab, selectedId]);
   const [showWizard, setShowWizard] = useState(false);
   const [showImport, setShowImport] = useState(false);
   const [showInvite, setShowInvite] = useState(false);
   const [showCrossplayInvite, setShowCrossplayInvite] = useState(false);
-  const [showCoManagement, setShowCoManagement] = useState(false);
   const [showAppSettings, setShowAppSettings] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<ServerProfile>();
   const [busyAction, setBusyAction] = useState("");
@@ -135,7 +138,6 @@ export function AppContent() {
   const closePromptOpen = useRef(false);
   const startupUpdateChecked = useRef(false);
 
-  const coRequestsInFlight = useRef(new Set<string>());
 
   const selected = useMemo(() => servers.find((server) => server.id === selectedId), [servers, selectedId]);
   const selectedStatus = selected ? statuses[selected.id] ?? stoppedStatus(selected) : stoppedStatus();
@@ -255,76 +257,6 @@ export function AppContent() {
   useEffect(() => {
     if (!backend.isDesktop) return;
     let active = true;
-    const respondToRequest = async (event: { serverId: string; eventType: string; payload: Record<string, unknown> }) => {
-      if (event.eventType === "participant.pending") {
-        window.dispatchEvent(new CustomEvent("server-hub:co-management-pending", { detail: event.payload }));
-        return;
-      }
-      const requestId = typeof event.payload.requestId === "string" ? event.payload.requestId : "";
-      const operationId = typeof event.payload.operationId === "string" ? event.payload.operationId : "";
-      if (!requestId || coRequestsInFlight.current.has(requestId)) return;
-      coRequestsInFlight.current.add(requestId);
-      const serverId = typeof event.payload.serverId === "string" ? event.payload.serverId : event.serverId;
-      const participantId = typeof event.payload.participantId === "string" ? event.payload.participantId : "";
-      try {
-        if (event.eventType === "summary.get") {
-          const snapshot = await backend.coManagementSnapshot(serverId);
-          const { enabled: _enabled, connectionState: _connectionState, participants: _participants, invites: _invites, ...safeSnapshot } = snapshot;
-          await backend.respondCoManagementRequest({ serverId, requestId, ok: true, result: safeSnapshot });
-        } else if (event.eventType === "settings.get" && participantId) {
-          const settings = await backend.coManagementSettings({ serverId, participantId });
-          await backend.respondCoManagementRequest({ serverId, requestId, ok: true, result: settings });
-        } else if (event.eventType === "settings.patch" && participantId) {
-          if (!operationId) throw new Error("missing operationId");
-          const changes = event.payload.changes;
-          if (!changes || typeof changes !== "object" || Array.isArray(changes)) throw new Error("invalid changes");
-          const expectedRevision = typeof event.payload.expectedRevision === "number" ? event.payload.expectedRevision : 0;
-          const role = event.payload.role === "editor" ? "editor" : "viewer";
-          const result = await backend.applyCoManagementSettings({ serverId, participantId, role, requestId: operationId, expectedRevision, changes: changes as Record<string, string | number | boolean> });
-          await backend.respondCoManagementRequest({ serverId, requestId, ok: true, result });
-        } else if (event.eventType === "audit.get" && participantId) {
-          const entries = await backend.coManagementAudit(serverId, participantId);
-          await backend.respondCoManagementRequest({ serverId, requestId, ok: true, result: entries });
-        } else if (event.eventType === "operation.get" && participantId) {
-          if (!operationId) throw new Error("missing operationId");
-          const result = await backend.coManagementOperation(serverId, participantId, operationId);
-          await backend.respondCoManagementRequest({ serverId, requestId, ok: true, result });
-        }
-      } catch (reason) {
-        const text = String(reason);
-        const errorCode = text.includes("409 Conflict") || text.includes("revision") ? "conflict" : text.includes("権限") || text.includes("editor") ? "forbidden" : "operation-failed";
-        await backend.respondCoManagementRequest({ serverId, requestId, ok: false, errorCode, errorMessage: text }).catch(() => undefined);
-      } finally {
-        coRequestsInFlight.current.delete(requestId);
-      }
-    };
-    const poll = async () => {
-      if (!active) return;
-      try {
-        const events = await backend.pollCoManagementEvents();
-        await Promise.all(events.map((event) => respondToRequest(event)));
-      } catch { /* A disconnected relay is represented in the co-management dialog. */ }
-    };
-    void poll();
-    const timer = window.setInterval(() => void poll(), 700);
-    return () => { active = false; window.clearInterval(timer); };
-  }, []);
-
-  useEffect(() => {
-    if (!backend.isDesktop || servers.length === 0) return;
-    let active = true;
-    const publish = () => {
-      if (!active) return;
-      void Promise.all(servers.map((server) => backend.publishCoManagementSnapshot(server.id).catch(() => undefined)));
-    };
-    publish();
-    const timer = window.setInterval(publish, 5_000);
-    return () => { active = false; window.clearInterval(timer); };
-  }, [servers]);
-
-  useEffect(() => {
-    if (!backend.isDesktop) return;
-    let active = true;
     let unlisten: (() => void) | undefined;
     import("@tauri-apps/api/event").then(({ listen }) => listen("app-close-requested", async () => {
       if (!active || closePromptOpen.current) return;
@@ -395,7 +327,6 @@ export function AppContent() {
         <span className="unofficial-label">{t("unofficial")}</span>
         <div className="titlebar-actions">
           {selected?.serverType === "paper" ? <button className="top-button ghost crossplay-invite-button" type="button" onClick={() => setShowCrossplayInvite(true)}><Icon name="users" />{t("inviteBedrock")}</button> : null}
-          <button className="top-button ghost" type="button" onClick={() => selected ? setShowCoManagement(true) : setToast(t("selectServerFirst"))}><Icon name="users" />共同管理</button>
           <button className="top-button ghost" type="button" onClick={() => selected ? setShowInvite(true) : setToast(t("selectServerFirst"))}><Icon name="invite" />{t("inviteFriends")}</button>
           <button className="icon-button theme-button" type="button" onClick={theme.cycle} aria-label={`${t("theme")}: ${theme.mode}`} title={`${t("theme")}: ${theme.mode}`}><Icon name={theme.resolved === "dark" ? "moon" : "sun"} /></button>
           <button className="top-button ghost import-button" type="button" onClick={() => setShowImport(true)}><Icon name="download" />{t("importServer")}</button>
@@ -404,13 +335,15 @@ export function AppContent() {
       </header>
 
       <div className="app-body">
-        <Sidebar servers={servers} serverIcons={serverIcons} selectedId={selectedId} statuses={statuses} onSelect={(id) => { setSelectedId(id); setActiveTab("overview"); }} onCreate={() => setShowWizard(true)} onImport={() => setShowImport(true)} onDelete={setDeleteTarget} onAppSettings={() => setShowAppSettings(true)} />
-        <main className="workspace">
+        <Sidebar servers={servers} serverIcons={serverIcons} selectedId={selectedId} statuses={statuses} activeTab={activeTab} availableTabs={selected ? getServerTabs(selected) : []} onNavigate={setActiveTab} onSelect={(id) => { setSelectedId(id); setActiveTab("overview"); }} onCreate={() => setShowWizard(true)} onImport={() => setShowImport(true)} onDelete={setDeleteTarget} onAppSettings={() => setShowAppSettings(true)} />
+        <main ref={workspaceRef} className="workspace" data-active-tab={activeTab}>
           {loading ? <div className="center-state"><span className="spinner" /><strong>{t("loadingServers")}</strong></div> : null}
           {!loading && !selected ? <div className="center-state empty"><img src="/assets/voxel-server-island.png" alt="" /><h1>{t("firstServerTitle")}</h1><p>{t("firstServerBody")}</p><button className="primary-button" type="button" onClick={() => setShowWizard(true)}><Icon name="add" />{t("newServer")}</button></div> : null}
           {selected ? (
             <>
-              <ServerHeader server={selected} serverIcon={serverIcons[selected.id]} status={selectedStatus} busyAction={busyAction} onStart={() => runAction("start")} onStop={() => runAction("stop")} onRestart={() => runAction("restart")} />
+              {activeTab === "overview" ? <HomeHub servers={servers} selected={selected} statuses={statuses} serverIcons={serverIcons} onSelect={setSelectedId} onCreate={() => setShowWizard(true)} onInvite={() => setShowInvite(true)} onNavigate={setActiveTab} onCopyAddress={() => copy(selectedStatus.address)}>
+                <ServerHeader server={selected} serverIcon={serverIcons[selected.id]} status={selectedStatus} busyAction={busyAction} onStart={() => runAction("start")} onStop={() => runAction("stop")} onRestart={() => runAction("restart")} />
+              </HomeHub> : <ServerHeader server={selected} serverIcon={serverIcons[selected.id]} status={selectedStatus} busyAction={busyAction} compact onStart={() => runAction("start")} onStop={() => runAction("stop")} onRestart={() => runAction("restart")} />}
               <nav className="tabs" aria-label={t("serverDetails")}>
                 {visibleTabs.map((tab) => <button key={tab.id} type="button" className={activeTab === tab.id ? "active" : ""} onMouseEnter={() => void preloadTabModule(tab.id, selectedIsPalworld)} onFocus={() => void preloadTabModule(tab.id, selectedIsPalworld)} onClick={() => setActiveTab(tab.id)}><Icon name={tab.icon} />{tab.label}</button>)}
               </nav>
@@ -437,7 +370,6 @@ export function AppContent() {
       {showImport ? <ImportServerWizard onClose={() => setShowImport(false)} onImported={(server) => { setServers((current) => [...current, server]); setSelectedId(server.id); setActiveTab("overview"); setShowImport(false); setToast("既存サーバーを読み取り登録しました"); }} /> : null}
       {showInvite && selected ? selectedIsPalworld ? <PalworldInviteDialog key={selected.id} server={selected} onClose={() => setShowInvite(false)} notify={setToast} /> : <InviteDialog server={selected} status={selectedStatus} onClose={() => setShowInvite(false)} notify={setToast} /> : null}
       {showCrossplayInvite && selected?.serverType === "paper" ? <CrossplayInviteDialog server={selected} status={selectedStatus} onClose={() => setShowCrossplayInvite(false)} notify={setToast} /> : null}
-      {showCoManagement && selected ? <CoManagementDialog server={selected} status={selectedStatus} onClose={() => setShowCoManagement(false)} notify={setToast} fail={setError} /> : null}
       {showAppSettings ? <AppSettingsDialog server={selected} status={selected ? selectedStatus : undefined} servers={servers} statuses={statuses} onStatusesChanged={(values) => setStatuses((current) => ({ ...current, ...values }))} onAppearanceChanged={theme.setAppearance} onClose={() => setShowAppSettings(false)} notify={setToast} fail={setError} /> : null}
       {deleteTarget ? <DeleteServerDialog server={deleteTarget} status={statuses[deleteTarget.id] ?? stoppedStatus(deleteTarget)} onClose={() => setDeleteTarget(undefined)} fail={setError} onDeleted={(result: DeleteServerResult) => {
         const next = servers.filter((item) => item.id !== deleteTarget.id);

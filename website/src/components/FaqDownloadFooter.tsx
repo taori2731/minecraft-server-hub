@@ -13,14 +13,14 @@ const faqs = [
   { q: "Javaが入っていなくても使えますか？", a: "アプリはJavaなしで起動できます。サーバーに必要なJavaがない場合は、Eclipse Temurinの配布元・ライセンス・版・容量・保存先を確認した後、アプリ専用領域へ取得して自動選択できます。Windows全体のJava設定は変更しません。" },
   { q: "アプリは自動更新されますか？", a: "署名された更新フィードを確認し、本人が版と更新内容を承認した場合だけ適用する仕組みを実装しています。サーバーが動作中のときは更新しません。一般公開フィード、旧版からの更新、コード署名を含む配布運用は公開前の最終確認が必要です。" },
   { q: "Pro版は購入できますか？", a: "まだ購入できません。複数サーバーの一括操作、ローカル監視、履歴検索、追加外観などは開発版に実装されていますが、価格、決済、ライセンス認証、税、返金、提供地域は未確定です。" },
-  { q: "いつダウンロードできますか？", a: "Windows x64向けの0.3.2開発版ビルドはありますが、正式名称、コード署名、一般公開URL、一般利用者環境でのインストール検証が未完了です。公開準備が整い次第このサイトで案内します。" },
+  { q: "いつダウンロードできますか？", a: "Windows x64向けの0.3.10リリース候補ビルドを準備しています。正式名称、コード署名、一般公開URL、一般利用者環境でのインストール検証が完了した後、このサイトで案内します。" },
 ];
 const pendingLinks = [[FileText, "公式ドキュメント"], [Lock, "プライバシーポリシー"], [Scale, "利用規約"], [Box, "ライセンス情報"], [Mail, "お問い合わせ・フィードバック"]] as const;
 
 export function FaqDownloadFooter() {
   return <>
     <section className="section faq-section" id="faq" aria-labelledby="faq-title"><div className="faq-heading"><CircleHelp aria-hidden="true" /><SectionHeading id="faq-title" title="よくある質問" description="公開前によく確認したい、対応範囲と制限をまとめました。" /></div><div className="faq-list">{faqs.map(({ q, a }) => <details key={q}><summary>{q}</summary><p>{a}</p></details>)}</div></section>
-    <section className="download-section" id="download" aria-labelledby="download-title"><MonitorDown aria-hidden="true" /><div><h2 id="download-title">Windows版を準備中</h2><p>0.3.2のローカル開発版あり・一般公開準備中。未署名ファイルや架空のダウンロード先には接続しません。</p></div><button className="button button-disabled" type="button" disabled>ダウンロード準備中</button></section>
+    <section className="download-section" id="download" aria-labelledby="download-title"><MonitorDown aria-hidden="true" /><div><h2 id="download-title">Windows版を準備中</h2><p>0.3.10のリリース候補あり・一般公開準備中。未署名ファイルや架空のダウンロード先には接続しません。</p></div><button className="button button-disabled" type="button" disabled>ダウンロード準備中</button></section>
     <footer className="site-footer"><div className="footer-brand"><Brand /><p>Windows x64向けデスクトップアプリ・製品名は仮称です。</p></div><div className="pending-links" aria-label="準備中の公式情報">{pendingLinks.map(([Icon, label]) => <span key={label}><Icon aria-hidden="true" />{label}<small>準備中</small></span>)}</div><p className="legal-note">MinecraftはMojang StudiosおよびMicrosoft、PalworldはPocketpairの各商標です。本サイトとアプリはMojang Studios、Microsoft、Pocketpair、Valveの承認・提携を受けた公式製品ではありません。</p><p className="copyright">© 2026 Minecraft Server Hub（仮称）</p></footer>
   </>;
 }

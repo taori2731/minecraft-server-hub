@@ -1,7 +1,7 @@
 {
   "name": "minecraft-server-hub",
   "private": true,
-  "version": "0.3.8",
+  "version": "0.3.10",
   "license": "Apache-2.0",
   "type": "module",
   "scripts": {
@@ -14,12 +14,6 @@
     "build:developer-tools:update": "cd developer-tools && npx --prefix .. tauri build --config src-tauri/tauri.updater.conf.json",
     "build:web": "vite build",
     "check": "tsc --noEmit",
-    "check:co-management": "npm --prefix co-management/relay run check && tsc --noEmit -p co-management/browser/tsconfig.json",
-    "dev:co-management": "vite --config co-management/browser/vite.config.ts",
-    "build:co-management": "npm run check:co-management && vite build --config co-management/browser/vite.config.ts",
-    "test:co-management:staging": "node scripts/co-management-staging-two-browser-acceptance.mjs",
-    "test:co-management:manual-fixture": "node scripts/co-management-staging-manual-fixture.mjs",
-    "test:co-management": "npm --prefix co-management/relay test",
     "check:developer-tools": "tsc --noEmit -p developer-tools/tsconfig.json",
     "quality:verify": "node scripts/quality-evidence.mjs",
     "verify:release": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/verify-release-artifact.ps1",

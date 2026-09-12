@@ -91,33 +91,6 @@ pub fn create(backups_root: &Path, profile: &ServerProfile, label: &str) -> AppR
     create_with_progress(backups_root, profile, label, |_| {})
 }
 
-pub fn planned_co_management_backup_path(
-    backups_root: &Path,
-    profile: &ServerProfile,
-    operation_id: &str,
-) -> PathBuf {
-    backups_root
-        .join(&profile.id)
-        .join(format!("{}.zip", operation_backup_id(operation_id)))
-}
-
-pub fn create_for_operation(
-    backups_root: &Path,
-    profile: &ServerProfile,
-    label: &str,
-    operation_id: &str,
-) -> AppResult<BackupInfo> {
-    let _operation = operation_lock()?;
-    create_unlocked(
-        backups_root,
-        profile,
-        label,
-        BackupScope::Full,
-        Some(operation_id),
-        &mut |_| {},
-    )
-}
-
 pub fn create_palworld_essential(
     backups_root: &Path,
     profile: &ServerProfile,
@@ -134,7 +107,6 @@ pub fn create_palworld_essential(
         profile,
         label,
         BackupScope::PalworldEssential,
-        None,
         &mut |_| {},
     )
 }
@@ -154,7 +126,6 @@ where
         profile,
         label,
         BackupScope::Full,
-        None,
         &mut on_progress,
     )
 }
@@ -164,7 +135,6 @@ fn create_unlocked<F>(
     profile: &ServerProfile,
     label: &str,
     scope: BackupScope,
-    operation_id: Option<&str>,
     on_progress: &mut F,
 ) -> AppResult<BackupInfo>
 where
@@ -193,9 +163,7 @@ where
         .filter(|character| character.is_ascii_alphanumeric() || matches!(character, '-' | '_'))
         .take(30)
         .collect();
-    let id = if let Some(operation_id) = operation_id {
-        operation_backup_id(operation_id)
-    } else if safe_label.is_empty() {
+    let id = if safe_label.is_empty() {
         stamp
     } else {
         format!("{stamp}-{safe_label}")
@@ -277,12 +245,6 @@ where
     Ok(info)
 }
 
-fn operation_backup_id(operation_id: &str) -> String {
-    let mut hasher = Sha256::new();
-    hasher.update(operation_id.as_bytes());
-    format!("co-management-{}", &hex::encode(hasher.finalize())[..32])
-}
-
 pub fn restore(backups_root: &Path, profile: &ServerProfile, backup_id: &str) -> AppResult<()> {
     let _operation = operation_lock()?;
     validate_id(backup_id)?;
@@ -305,7 +267,6 @@ pub fn restore(backups_root: &Path, profile: &ServerProfile, backup_id: &str) ->
         profile,
         "before-restore",
         BackupScope::Full,
-        None,
         &mut no_progress,
     )?;
     let root = PathBuf::from(&profile.root_path).canonicalize()?;

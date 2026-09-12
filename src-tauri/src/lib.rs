@@ -1,7 +1,6 @@
 mod app_update;
 mod backup;
 mod bedrock;
-mod co_management;
 mod credentials;
 mod crossplay;
 mod diagnostics;
@@ -13,6 +12,7 @@ mod extensions;
 mod game_adapter;
 mod invite;
 mod java;
+mod legacy_cleanup;
 mod migration;
 mod models;
 mod palworld;
@@ -49,14 +49,6 @@ use tauri::{Emitter, Manager, State};
 use uuid::Uuid;
 
 use crate::{
-    co_management::{
-        CoManagementApplyInput, CoManagementApplyResult, CoManagementAuditEntry,
-        CoManagementConfigView, CoManagementEvent, CoManagementHostResponseInput,
-        CoManagementInviteResult, CoManagementJournalMigrationResult, CoManagementOperationResult,
-        CoManagementParticipantInput, CoManagementServerSnapshot, CoManagementSettingsInput,
-        CoManagementSettingsSnapshot, ConfigureCoManagementInput, HostConnectionManager,
-        IssueCoManagementInviteInput,
-    },
     downloads::{download_server, http_client},
     error::{AppError, AppResult},
     java::{detect_java_runtimes, required_java_major},
@@ -130,14 +122,11 @@ fn app_update_install_allowed(running: usize, stopping: usize, stop_operations: 
 
 pub struct AppState {
     store: Arc<Mutex<Store>>,
-    co_management_store: Arc<Mutex<co_management::CoManagementStore>>,
-    co_operations: co_management::ServerOperationCoordinator,
-    co_connections: HostConnectionManager,
+    server_operations: ServerOperationCoordinator,
     client: reqwest::Client,
     processes: Arc<ProcessMap>,
     stopping_servers: Arc<StoppingMap>,
     logs: LogMap,
-    database_path: PathBuf,
     backups_dir: PathBuf,
     audit_dir: PathBuf,
     profiles_dir: PathBuf,
@@ -149,6 +138,30 @@ pub struct AppState {
     stop_operations: Arc<AtomicUsize>,
     post_stop_exit_guard: Arc<Mutex<Option<Instant>>>,
     allow_app_exit: Arc<AtomicBool>,
+}
+
+#[derive(Debug, Clone, Default)]
+struct ServerOperationCoordinator {
+    locks: Arc<Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>>,
+}
+
+impl ServerOperationCoordinator {
+    fn lock_for(&self, server_id: &str) -> Arc<tokio::sync::Mutex<()>> {
+        self.locks
+            .lock()
+            .unwrap()
+            .entry(server_id.to_string())
+            .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(())))
+            .clone()
+    }
+
+    fn blocking_lock(&self, server_id: &str) -> tokio::sync::OwnedMutexGuard<()> {
+        self.lock_for(server_id).blocking_lock_owned()
+    }
+
+    async fn lock(&self, server_id: &str) -> tokio::sync::OwnedMutexGuard<()> {
+        self.lock_for(server_id).lock_owned().await
+    }
 }
 
 const POST_STOP_EXIT_GUARD_DURATION: Duration = Duration::from_secs(8);
@@ -324,589 +337,6 @@ fn quit_app(app: tauri::AppHandle, state: State<'_, AppState>) -> AppResult<()> 
 #[tauri::command]
 fn list_servers(state: State<'_, AppState>) -> AppResult<Vec<ServerProfile>> {
     state.store.lock().unwrap().list_servers()
-}
-
-fn co_management_config_view(
-    config: &co_management::CoManagementConfig,
-    connection_state: Option<String>,
-) -> CoManagementConfigView {
-    CoManagementConfigView {
-        server_id: config.server_id.clone(),
-        enabled: config.enabled,
-        endpoint: config.endpoint.clone(),
-        connection_state: connection_state.unwrap_or_else(|| config.connection_state.clone()),
-        revision: config.revision,
-        permission_generation: config.permission_generation,
-        recovery_required: config.recovery_required,
-        updated_at: config.updated_at.clone(),
-    }
-}
-
-#[tauri::command]
-fn get_co_management_snapshot(
-    server_id: String,
-    state: State<'_, AppState>,
-) -> AppResult<CoManagementServerSnapshot> {
-    let profile = state.store.lock().unwrap().get_server(&server_id)?;
-    let fingerprint = co_management::config_fingerprint(&profile).ok();
-    let co_store = state.co_management_store.lock().unwrap();
-    let config = co_store.ensure_config(&server_id, fingerprint.as_deref())?;
-    let status = process::runtime_status(
-        &profile,
-        &state.processes,
-        &state.stopping_servers,
-        &state.logs,
-    );
-    Ok(co_management::build_snapshot(
-        &profile,
-        &status,
-        &config,
-        co_store.list_participants(&server_id)?,
-        co_store.list_invites(&server_id)?,
-        state.co_connections.state(&server_id),
-    ))
-}
-
-#[tauri::command]
-fn get_co_management_config(
-    server_id: String,
-    state: State<'_, AppState>,
-) -> AppResult<CoManagementConfigView> {
-    let profile = state.store.lock().unwrap().get_server(&server_id)?;
-    let fingerprint = co_management::config_fingerprint(&profile).ok();
-    let co_store = state.co_management_store.lock().unwrap();
-    let config = co_store.ensure_config(&server_id, fingerprint.as_deref())?;
-    Ok(co_management_config_view(
-        &config,
-        Some(state.co_connections.state(&server_id)),
-    ))
-}
-
-#[tauri::command]
-fn get_co_management_legacy_journal_count(
-    server_id: String,
-    state: State<'_, AppState>,
-) -> AppResult<u64> {
-    state
-        .co_management_store
-        .lock()
-        .unwrap()
-        .legacy_journal_count(&server_id)
-}
-
-#[tauri::command]
-fn migrate_co_management_legacy_journal(
-    server_id: String,
-    confirmation: String,
-    state: State<'_, AppState>,
-) -> AppResult<CoManagementJournalMigrationResult> {
-    const CONFIRMATION: &str = "平文ジャーナルを暗号化して置換する";
-    if confirmation != CONFIRMATION {
-        return Err(AppError::Validation(
-            "旧形式ジャーナルの明示確認が一致しないため移行を中止しました".into(),
-        ));
-    }
-    let _operation = state.co_operations.blocking_lock(&server_id);
-    state
-        .co_management_store
-        .lock()
-        .unwrap()
-        .migrate_legacy_journals(&server_id)
-}
-
-#[tauri::command]
-fn configure_co_management(
-    input: ConfigureCoManagementInput,
-    state: State<'_, AppState>,
-) -> AppResult<CoManagementConfigView> {
-    let _operation = state.co_operations.blocking_lock(&input.server_id);
-    let profile = state.store.lock().unwrap().get_server(&input.server_id)?;
-    let fingerprint = co_management::config_fingerprint(&profile).ok();
-    let co_store = state.co_management_store.lock().unwrap();
-    let current = co_store.ensure_config(&input.server_id, fingerprint.as_deref())?;
-    let endpoint = input
-        .endpoint
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(|value| co_management::validate_relay_endpoint(value).map(|url| url.to_string()))
-        .transpose()?;
-    let endpoint = endpoint.or(current.endpoint.clone());
-    if input.enabled && endpoint.is_none() {
-        return Err(AppError::Validation(
-            "共同管理を有効にするには中継URLを指定してください".into(),
-        ));
-    }
-    let host_id = if input.enabled {
-        Some(
-            current
-                .host_id
-                .clone()
-                .unwrap_or_else(co_management::generate_host_id),
-        )
-    } else {
-        current.host_id.clone()
-    };
-    let connection_identity_changed = current.enabled != input.enabled
-        || current.endpoint != endpoint
-        || current.host_id != host_id;
-    if let Some(host_id) = host_id.as_deref() {
-        if input.enabled {
-            let _ = credentials::ensure_co_management_host_token(
-                host_id,
-                co_management::generate_secret,
-            )?;
-        }
-    }
-    let config = co_store.configure(
-        &input.server_id,
-        endpoint.as_deref(),
-        host_id.as_deref(),
-        input.enabled,
-        fingerprint.as_deref(),
-    )?;
-    if !input.enabled || connection_identity_changed {
-        state.co_connections.disconnect(&input.server_id);
-    }
-    let _ = co_store.append_audit(
-        &input.server_id,
-        "local-host",
-        "ホストPC",
-        if input.enabled {
-            "co-management.enable"
-        } else {
-            "co-management.disable"
-        },
-        &serde_json::json!({ "enabled": input.enabled }),
-        "success",
-        None,
-    );
-    Ok(co_management_config_view(
-        &config,
-        Some(state.co_connections.state(&input.server_id)),
-    ))
-}
-
-#[tauri::command]
-async fn connect_co_management(
-    server_id: String,
-    state: State<'_, AppState>,
-) -> AppResult<CoManagementConfigView> {
-    let _operation = state.co_operations.lock(&server_id).await;
-    let (endpoint, host_id, token) = {
-        let co_store = state.co_management_store.lock().unwrap();
-        let config = co_store.config(&server_id)?.ok_or(AppError::NotFound)?;
-        if !config.enabled {
-            return Err(AppError::Validation("共同管理が無効になっています".into()));
-        }
-        let endpoint = config
-            .endpoint
-            .as_deref()
-            .ok_or_else(|| AppError::Validation("共同管理の中継URLが未設定です".into()))?
-            .to_string();
-        let host_id = config
-            .host_id
-            .as_deref()
-            .ok_or_else(|| AppError::Validation("共同管理ホストIDが未登録です".into()))?
-            .to_string();
-        let token = credentials::load_co_management_host_token(&host_id)?;
-        co_store.set_connection_state(&server_id, "connecting")?;
-        (endpoint, host_id, token)
-    };
-    if let Err(error) =
-        co_management::register_host(&state.client, &endpoint, &host_id, &token).await
-    {
-        let _ = state
-            .co_management_store
-            .lock()
-            .unwrap()
-            .set_connection_state(&server_id, "disconnected");
-        return Err(error);
-    }
-    let revoked_participants = state
-        .co_management_store
-        .lock()
-        .unwrap()
-        .rotate_permission_generation(&server_id)?;
-    if let Err(error) = state
-        .co_connections
-        .connect(&server_id, &endpoint, &host_id, &token)
-        .await
-    {
-        let _ = state
-            .co_management_store
-            .lock()
-            .unwrap()
-            .set_connection_state(&server_id, "disconnected");
-        return Err(error);
-    }
-    for participant_id in revoked_participants {
-        let _ = state.co_connections.send(
-            &server_id,
-            serde_json::json!({
-                "type": "participant.revoked",
-                "protocolVersion": co_management::PROTOCOL_VERSION,
-                "serverId": server_id,
-                "participantId": participant_id,
-            }),
-        );
-    }
-    let co_store = state.co_management_store.lock().unwrap();
-    co_store.set_connection_state(&server_id, "connected")?;
-    let config = co_store.config(&server_id)?.ok_or(AppError::NotFound)?;
-    Ok(co_management_config_view(
-        &config,
-        Some(state.co_connections.state(&server_id)),
-    ))
-}
-
-#[tauri::command]
-fn issue_co_management_invite(
-    input: IssueCoManagementInviteInput,
-    state: State<'_, AppState>,
-) -> AppResult<CoManagementInviteResult> {
-    let _operation = state.co_operations.blocking_lock(&input.server_id);
-    let profile = state.store.lock().unwrap().get_server(&input.server_id)?;
-    let co_store = state.co_management_store.lock().unwrap();
-    let config = co_store
-        .config(&input.server_id)?
-        .ok_or(AppError::NotFound)?;
-    if !config.enabled {
-        return Err(AppError::Validation(
-            "共同管理を有効にしてから招待を発行してください".into(),
-        ));
-    }
-    if config.recovery_required {
-        return Err(AppError::Validation(
-            "前回の共同管理保存を復旧するまで、新しい招待は発行できません".into(),
-        ));
-    }
-    let endpoint = config
-        .endpoint
-        .as_deref()
-        .ok_or_else(|| AppError::Validation("共同管理の中継URLが未設定です".into()))?;
-    co_management::create_invite(
-        &co_store,
-        &state.co_connections,
-        &profile,
-        endpoint,
-        &input.role,
-        input.expires_minutes,
-    )
-}
-
-#[tauri::command]
-fn poll_co_management_events(state: State<'_, AppState>) -> AppResult<Vec<CoManagementEvent>> {
-    let events = state.co_connections.poll_events();
-    let co_store = state.co_management_store.lock().unwrap();
-    for event in &events {
-        if event.event_type != "participant.pending" {
-            continue;
-        }
-        let Some(server_id) = event
-            .payload
-            .get("serverId")
-            .and_then(|value| value.as_str())
-        else {
-            continue;
-        };
-        if server_id != event.server_id {
-            continue;
-        }
-        let Some(participant_id) = event
-            .payload
-            .get("participantId")
-            .and_then(|value| value.as_str())
-        else {
-            continue;
-        };
-        let Some(display_name) = event
-            .payload
-            .get("displayName")
-            .and_then(|value| value.as_str())
-        else {
-            continue;
-        };
-        let Some(role) = event.payload.get("role").and_then(|value| value.as_str()) else {
-            continue;
-        };
-        let Some(join_code) = event
-            .payload
-            .get("joinCode")
-            .and_then(|value| value.as_str())
-        else {
-            continue;
-        };
-        let Some(expires_at) = event
-            .payload
-            .get("expiresAt")
-            .and_then(|value| value.as_str())
-        else {
-            continue;
-        };
-        credentials::store_co_management_pending_code(server_id, participant_id, join_code)?;
-        if let Err(error) = co_store.upsert_pending(
-            server_id,
-            participant_id,
-            display_name,
-            role,
-            join_code,
-            expires_at,
-        ) {
-            let _ = credentials::delete_co_management_pending_code(server_id, participant_id);
-            return Err(error);
-        }
-    }
-    Ok(events)
-}
-
-#[tauri::command]
-fn get_co_management_pending_code(
-    input: CoManagementParticipantInput,
-    state: State<'_, AppState>,
-) -> AppResult<String> {
-    let co_store = state.co_management_store.lock().unwrap();
-    let participant = co_store
-        .participant(&input.server_id, &input.participant_id)?
-        .ok_or(AppError::NotFound)?;
-    if participant.state != "pending" || participant.expires_at <= Utc::now().to_rfc3339() {
-        let _ =
-            credentials::delete_co_management_pending_code(&input.server_id, &input.participant_id);
-        return Err(AppError::Validation(
-            "共同管理の参加コードが期限切れです".into(),
-        ));
-    }
-    credentials::load_co_management_pending_code(&input.server_id, &input.participant_id)
-}
-
-#[tauri::command]
-fn approve_co_management_participant(
-    input: CoManagementParticipantInput,
-    state: State<'_, AppState>,
-) -> AppResult<CoManagementParticipantInput> {
-    let _operation = state.co_operations.blocking_lock(&input.server_id);
-    let co_store = state.co_management_store.lock().unwrap();
-    if co_store
-        .config(&input.server_id)?
-        .ok_or(AppError::NotFound)?
-        .recovery_required
-    {
-        return Err(AppError::Validation(
-            "前回の共同管理保存を復旧するまで、参加者を承認できません".into(),
-        ));
-    }
-    let participant =
-        co_store.set_participant_state(&input.server_id, &input.participant_id, "approved")?;
-    credentials::delete_co_management_pending_code(&input.server_id, &input.participant_id)?;
-    co_store.append_audit(
-        &input.server_id,
-        "local-host",
-        "ホストPC",
-        "participant.approve",
-        &serde_json::json!({ "participantId": participant.id, "role": participant.role }),
-        "success",
-        None,
-    )?;
-    state.co_connections.send(
-        &input.server_id,
-        serde_json::json!({
-            "type": "participant.approved",
-            "protocolVersion": co_management::PROTOCOL_VERSION,
-            "serverId": input.server_id,
-            "participantId": input.participant_id,
-        }),
-    )?;
-    Ok(input)
-}
-
-#[tauri::command]
-fn revoke_co_management_participant(
-    input: CoManagementParticipantInput,
-    state: State<'_, AppState>,
-) -> AppResult<CoManagementParticipantInput> {
-    let _operation = state.co_operations.blocking_lock(&input.server_id);
-    let co_store = state.co_management_store.lock().unwrap();
-    let participant =
-        co_store.set_participant_state(&input.server_id, &input.participant_id, "revoked")?;
-    credentials::delete_co_management_pending_code(&input.server_id, &input.participant_id)?;
-    co_store.append_audit(
-        &input.server_id,
-        "local-host",
-        "ホストPC",
-        "participant.revoke",
-        &serde_json::json!({ "participantId": participant.id }),
-        "success",
-        None,
-    )?;
-    state.co_connections.send(
-        &input.server_id,
-        serde_json::json!({
-            "type": "participant.revoked",
-            "protocolVersion": co_management::PROTOCOL_VERSION,
-            "serverId": input.server_id,
-            "participantId": input.participant_id,
-        }),
-    )?;
-    Ok(input)
-}
-
-#[tauri::command]
-fn get_co_management_settings(
-    input: CoManagementSettingsInput,
-    state: State<'_, AppState>,
-) -> AppResult<CoManagementSettingsSnapshot> {
-    let profile = state.store.lock().unwrap().get_server(&input.server_id)?;
-    let co_store = state.co_management_store.lock().unwrap();
-    let participant = co_store
-        .participant(&input.server_id, &input.participant_id)?
-        .ok_or(AppError::NotFound)?;
-    co_management::authorize_participant(
-        &co_store,
-        &input.server_id,
-        &input.participant_id,
-        &participant.role,
-    )?;
-    let config = co_store
-        .config(&input.server_id)?
-        .ok_or(AppError::NotFound)?;
-    let status = process::runtime_status(
-        &profile,
-        &state.processes,
-        &state.stopping_servers,
-        &state.logs,
-    );
-    co_management::build_settings_snapshot(&profile, &status, config.revision)
-}
-
-#[tauri::command]
-async fn apply_co_management_settings(
-    input: CoManagementApplyInput,
-    state: State<'_, AppState>,
-) -> AppResult<CoManagementApplyResult> {
-    let _operation = state.co_operations.lock(&input.server_id).await;
-    let database_path = state.database_path.clone();
-    let backups_dir = state.backups_dir.clone();
-    let processes = state.processes.clone();
-    let stopping_servers = state.stopping_servers.clone();
-    tokio::task::spawn_blocking(move || {
-        // Reopen the SQLite handles on the blocking pool. Holding Tauri State
-        // mutex guards across the full-file backup would block all commands
-        // that need either database, including the event poller.
-        let store = Store::open(&database_path)?;
-        let co_store = co_management::CoManagementStore::open(&database_path)?;
-        co_management::apply_settings(
-            &co_store,
-            &store,
-            &backups_dir,
-            &processes,
-            &stopping_servers,
-            &input,
-        )
-    })
-    .await
-    .map_err(|error| AppError::Other(format!("共同管理設定処理が中断されました: {error}")))?
-}
-
-#[tauri::command]
-fn get_co_management_operation(
-    server_id: String,
-    participant_id: String,
-    request_id: String,
-    state: State<'_, AppState>,
-) -> AppResult<CoManagementOperationResult> {
-    let co_store = state.co_management_store.lock().unwrap();
-    let participant = co_store
-        .participant(&server_id, &participant_id)?
-        .ok_or(AppError::NotFound)?;
-    co_management::authorize_participant(
-        &co_store,
-        &server_id,
-        &participant_id,
-        &participant.role,
-    )?;
-    co_store.operation_result(&server_id, &participant_id, &request_id)
-}
-
-#[tauri::command]
-fn respond_co_management_request(
-    input: CoManagementHostResponseInput,
-    state: State<'_, AppState>,
-) -> AppResult<()> {
-    if input.request_id.is_empty() || input.request_id.len() > 128 {
-        return Err(AppError::Validation("共同管理requestIdが不正です".into()));
-    }
-    let error_message = input
-        .error_message
-        .as_deref()
-        .map(|_| "ホストPCで操作を完了できませんでした");
-    state.co_connections.send(
-        &input.server_id,
-        serde_json::json!({
-            "type": "host.response",
-            "protocolVersion": co_management::PROTOCOL_VERSION,
-            "serverId": input.server_id,
-            "requestId": input.request_id,
-            "ok": input.ok,
-            "result": input.result,
-            "errorCode": input.error_code,
-            "errorMessage": error_message,
-        }),
-    )
-}
-
-#[tauri::command]
-fn publish_co_management_snapshot(server_id: String, state: State<'_, AppState>) -> AppResult<()> {
-    let profile = state.store.lock().unwrap().get_server(&server_id)?;
-    let co_store = state.co_management_store.lock().unwrap();
-    let config = co_store.config(&server_id)?.ok_or(AppError::NotFound)?;
-    if !config.enabled {
-        return Ok(());
-    }
-    let status = process::runtime_status(
-        &profile,
-        &state.processes,
-        &state.stopping_servers,
-        &state.logs,
-    );
-    let snapshot = serde_json::json!({
-        "serverId": profile.id,
-        "serverName": profile.name,
-        "gameKind": profile.edition(),
-        "state": status.state,
-        "playerCount": status.player_count,
-        "maxPlayers": status.max_players,
-        "fetchedAt": Utc::now().to_rfc3339(),
-        "revision": config.revision,
-        "capabilities": co_management::capabilities(&profile),
-    });
-    state.co_connections.send(
-        &server_id,
-        serde_json::json!({
-            "type": "host.snapshot",
-            "protocolVersion": co_management::PROTOCOL_VERSION,
-            "serverId": server_id,
-            "snapshot": snapshot,
-        }),
-    )
-}
-
-#[tauri::command]
-fn get_co_management_audit(
-    server_id: String,
-    participant_id: String,
-    state: State<'_, AppState>,
-) -> AppResult<Vec<CoManagementAuditEntry>> {
-    let co_store = state.co_management_store.lock().unwrap();
-    let participant = co_store
-        .participant(&server_id, &participant_id)?
-        .ok_or(AppError::NotFound)?;
-    co_management::authorize_participant(
-        &co_store,
-        &server_id,
-        &participant_id,
-        &participant.role,
-    )?;
-    co_store.audit(&server_id)
 }
 
 #[tauri::command]
@@ -1418,7 +848,7 @@ fn start_server(
     app: tauri::AppHandle,
     state: State<'_, AppState>,
 ) -> AppResult<()> {
-    let _operation = state.co_operations.blocking_lock(&server_id);
+    let _operation = state.server_operations.blocking_lock(&server_id);
     let store = state.store.lock().unwrap();
     let profile = store.get_server(&server_id)?;
     let servers = store.list_servers()?;
@@ -1497,7 +927,7 @@ async fn stop_server(
     app: tauri::AppHandle,
     state: State<'_, AppState>,
 ) -> AppResult<()> {
-    let _operation = state.co_operations.lock(&server_id).await;
+    let _operation = state.server_operations.lock(&server_id).await;
     let _stop_guard = StopOperationGuard::new(
         state.stop_operations.clone(),
         state.post_stop_exit_guard.clone(),
@@ -1608,7 +1038,7 @@ async fn restart_server(
     app: tauri::AppHandle,
     state: State<'_, AppState>,
 ) -> AppResult<()> {
-    let _operation = state.co_operations.lock(&server_id).await;
+    let _operation = state.server_operations.lock(&server_id).await;
     let _stop_guard = StopOperationGuard::new(
         state.stop_operations.clone(),
         state.post_stop_exit_guard.clone(),
@@ -1791,7 +1221,7 @@ fn update_palworld_settings(
     input: UpdatePalworldSettingsInput,
     state: State<'_, AppState>,
 ) -> AppResult<ServerProfile> {
-    let _operation = state.co_operations.blocking_lock(&input.server_id);
+    let _operation = state.server_operations.blocking_lock(&input.server_id);
     if process::is_busy(&input.server_id, &state.processes, &state.stopping_servers) {
         return Err(AppError::Validation(
             "Palworld設定を変更する前にサーバーを安全停止してください".into(),
@@ -1894,14 +1324,6 @@ fn update_palworld_settings(
         }
         return Err(error);
     }
-    co_management::record_local_change(
-        &state.co_management_store.lock().unwrap(),
-        &input.server_id,
-        "local-host",
-        "ホストPC",
-        "palworld.settings.update",
-        &profile,
-    )?;
     append_audit(
         &state.audit_dir,
         &input.server_id,
@@ -2139,8 +1561,7 @@ async fn delete_server(
     let backups_dir = state.backups_dir.clone();
     let logs = state.logs.clone();
     let audit_dir = state.audit_dir.clone();
-    let co_management_store = state.co_management_store.clone();
-    let operation = state.co_operations.lock(&input.server_id).await;
+    let operation = state.server_operations.lock(&input.server_id).await;
 
     tokio::task::spawn_blocking(move || {
         let _operation = operation;
@@ -2150,11 +1571,6 @@ async fn delete_server(
             ));
         }
         let profile = store.lock().unwrap().get_server(&input.server_id)?;
-        let host_id = co_management_store
-            .lock()
-            .unwrap()
-            .config(&profile.id)?
-            .and_then(|config| config.host_id);
         if !is_valid_delete_confirmation(&input.confirmation_text) {
             return Err(AppError::Validation(
                 "削除確認には半角で「Delete」と入力してください".into(),
@@ -2173,9 +1589,6 @@ async fn delete_server(
         }
 
         store.lock().unwrap().delete_server(&profile.id)?;
-        if let Some(host_id) = host_id {
-            credentials::delete_co_management_host_token(&host_id)?;
-        }
         if profile.game_adapter().is_palworld() {
             credentials::delete_palworld_admin_password(&profile.id)?;
         }
@@ -2947,7 +2360,7 @@ async fn create_backup(
     app: tauri::AppHandle,
     state: State<'_, AppState>,
 ) -> AppResult<BackupInfo> {
-    let _operation = state.co_operations.lock(&server_id).await;
+    let _operation = state.server_operations.lock(&server_id).await;
     if process::is_busy(&server_id, &state.processes, &state.stopping_servers) {
         return Err(AppError::Validation(
             "整合性のあるバックアップを作るため、先にサーバーを停止してください".into(),
@@ -3007,7 +2420,7 @@ fn restore_backup(
     backup_id: String,
     state: State<'_, AppState>,
 ) -> AppResult<()> {
-    let _operation = state.co_operations.blocking_lock(&server_id);
+    let _operation = state.server_operations.blocking_lock(&server_id);
     if process::is_busy(&server_id, &state.processes, &state.stopping_servers) {
         return Err(AppError::Validation(
             "復元する前にサーバーを停止してください".into(),
@@ -3016,14 +2429,6 @@ fn restore_backup(
     let profile = state.store.lock().unwrap().get_server(&server_id)?;
     require_minecraft(&profile, "バックアップ復元")?;
     backup::restore(&state.backups_dir, &profile, &backup_id)?;
-    co_management::record_local_change(
-        &state.co_management_store.lock().unwrap(),
-        &server_id,
-        "local-host",
-        "ホストPC",
-        "backup.restore",
-        &profile,
-    )?;
     append_audit(
         &state.audit_dir,
         &server_id,
@@ -3080,7 +2485,7 @@ fn update_server_settings(
     port: u16,
     state: State<'_, AppState>,
 ) -> AppResult<ServerProfile> {
-    let _operation = state.co_operations.blocking_lock(&server_id);
+    let _operation = state.server_operations.blocking_lock(&server_id);
     if process::is_busy(&server_id, &state.processes, &state.stopping_servers) {
         return Err(AppError::Validation(
             "安全バックアップと設定変更のため、先にサーバーを停止してください".into(),
@@ -3100,14 +2505,6 @@ fn update_server_settings(
     let backup_info = backup::create(&state.backups_dir, &profile, "before-settings")?;
     settings::apply(&mut profile, settings, max_memory_mib, port)?;
     store.update_server(&profile)?;
-    co_management::record_local_change(
-        &state.co_management_store.lock().unwrap(),
-        &server_id,
-        "local-host",
-        "ホストPC",
-        "settings.update",
-        &profile,
-    )?;
     append_audit(
         &state.audit_dir,
         &server_id,
@@ -3123,7 +2520,7 @@ fn regenerate_world(
     input: RegenerateWorldInput,
     state: State<'_, AppState>,
 ) -> AppResult<WorldRegenerationResult> {
-    let _operation = state.co_operations.blocking_lock(&input.server_id);
+    let _operation = state.server_operations.blocking_lock(&input.server_id);
     if process::is_busy(&input.server_id, &state.processes, &state.stopping_servers) {
         return Err(AppError::Validation(
             "ワールドを再生成する前にサーバーを安全停止してください".into(),
@@ -3171,14 +2568,6 @@ fn regenerate_world(
             "設定情報の保存に失敗したため、再生成前バックアップから元へ戻しました: {error}"
         )));
     }
-    co_management::record_local_change(
-        &state.co_management_store.lock().unwrap(),
-        &input.server_id,
-        "local-host",
-        "ホストPC",
-        "world.regenerate",
-        &updated,
-    )?;
     append_audit(
         &state.audit_dir,
         &input.server_id,
@@ -3861,7 +3250,7 @@ async fn apply_managed_extension_update(
     input: ApplyManagedExtensionUpdateInput,
     state: State<'_, AppState>,
 ) -> AppResult<crate::models::ExtensionInstallPlan> {
-    let _operation = state.co_operations.lock(&input.server_id).await;
+    let _operation = state.server_operations.lock(&input.server_id).await;
     if process::is_busy(&input.server_id, &state.processes, &state.stopping_servers) {
         return Err(AppError::Validation(
             "更新する前にサーバーを停止してください".into(),
@@ -3892,7 +3281,7 @@ async fn apply_server_update(
     input: ApplyServerUpdateInput,
     state: State<'_, AppState>,
 ) -> AppResult<UpdateApplyResult> {
-    let _operation = state.co_operations.lock(&input.server_id).await;
+    let _operation = state.server_operations.lock(&input.server_id).await;
     let mut server = state.store.lock().unwrap().get_server(&input.server_id)?;
     if input.confirmation_name.trim() != server.name {
         return Err(AppError::Validation(
@@ -3973,14 +3362,6 @@ async fn apply_server_update(
         let _ = backup::restore(&state.backups_dir, &server, &backup_info.id);
         return Err(error);
     }
-    co_management::record_local_change(
-        &state.co_management_store.lock().unwrap(),
-        &server.id,
-        "local-host",
-        "ホストPC",
-        "server.update.apply",
-        &server,
-    )?;
     append_audit(
         &state.audit_dir,
         &server.id,
@@ -5189,7 +4570,6 @@ fn start_server_automation_monitor(app: tauri::AppHandle) {
 }
 
 pub fn run() {
-    co_management::ensure_rustls_crypto_provider();
     let stop_operations = Arc::new(AtomicUsize::new(0));
     let post_stop_exit_guard = Arc::new(Mutex::new(None));
     let allow_app_exit = Arc::new(AtomicBool::new(false));
@@ -5270,33 +4650,24 @@ pub fn run() {
             let backups_dir = data_dir.join("backups");
             std::fs::create_dir_all(&backups_dir)?;
             let _ = backup::cleanup_stale_parts(&backups_dir);
-            let store = Arc::new(Mutex::new(
-                Store::open(&data_dir.join("server-hub.sqlite3"))
-                    .map_err(|error| Box::<dyn std::error::Error>::from(error.to_string()))?,
-            ));
-            let co_management_store = Arc::new(Mutex::new(
-                co_management::CoManagementStore::open(&data_dir.join("server-hub.sqlite3"))
-                    .map_err(|error| Box::<dyn std::error::Error>::from(error.to_string()))?,
-            ));
-            co_management_store
-                .lock()
-                .unwrap()
-                .recover_incomplete_operations(&store.lock().unwrap())
+            let database_path = data_dir.join("server-hub.sqlite3");
+            legacy_cleanup::purge_removed_remote_management(&database_path)
                 .map_err(|error| Box::<dyn std::error::Error>::from(error.to_string()))?;
+            let store = Arc::new(Mutex::new(
+                Store::open(&database_path)
+                    .map_err(|error| Box::<dyn std::error::Error>::from(error.to_string()))?,
+            ));
             let processes = Arc::new(Mutex::new(HashMap::new()));
             let logs = Arc::new(Mutex::new(HashMap::new()));
             let audit_dir = data_dir.join("audit");
             let state = AppState {
                 store,
-                co_management_store,
-                co_operations: co_management::ServerOperationCoordinator::default(),
-                co_connections: HostConnectionManager::default(),
+                server_operations: ServerOperationCoordinator::default(),
                 client: http_client()
                     .map_err(|error| Box::<dyn std::error::Error>::from(error.to_string()))?,
                 processes,
                 stopping_servers: stopping_servers_for_state.clone(),
                 logs,
-                database_path: data_dir.join("server-hub.sqlite3"),
                 backups_dir,
                 audit_dir,
                 profiles_dir: data_dir.join("profiles"),
@@ -5318,23 +4689,6 @@ pub fn run() {
             check_app_update,
             install_app_update,
             list_servers,
-            get_co_management_snapshot,
-            get_co_management_config,
-            get_co_management_legacy_journal_count,
-            migrate_co_management_legacy_journal,
-            configure_co_management,
-            connect_co_management,
-            issue_co_management_invite,
-            poll_co_management_events,
-            get_co_management_pending_code,
-            approve_co_management_participant,
-            revoke_co_management_participant,
-            get_co_management_settings,
-            apply_co_management_settings,
-            get_co_management_operation,
-            respond_co_management_request,
-            publish_co_management_snapshot,
-            get_co_management_audit,
             get_automation_settings,
             save_automation_settings,
             check_extension_conflicts,

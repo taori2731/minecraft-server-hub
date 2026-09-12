@@ -8,10 +8,9 @@ use sha2::{Digest, Sha256};
 
 use crate::error::{AppError, AppResult};
 
-pub const DPAPI_BLOB_MAGIC: &[u8] = b"MSH-CO-MANAGEMENT-DPAPI-V1\0";
+pub const DPAPI_BLOB_MAGIC: &[u8] = b"MSH-DPAPI-V2\0";
+const LEGACY_DPAPI_BLOB_MAGIC: &[u8] = b"MSH-CO-MANAGEMENT-DPAPI-V1\0";
 pub const DPAPI_TEXT_PREFIX: &str = "dpapi-v1:";
-pub const CO_MANAGEMENT_RECOVERY_DOMAIN: &[u8] =
-    b"minecraft-server-hub:co-management:recovery:v1\0";
 pub const BACKUP_SECRET_ENTRY_DOMAIN: &[u8] = b"minecraft-server-hub:backup:secret-entry:v1\0";
 pub const PALWORLD_CONFIG_BACKUP_DOMAIN: &[u8] =
     b"minecraft-server-hub:palworld-config-backup:v1\0";
@@ -86,6 +85,7 @@ pub fn unprotect_bytes(domain: &[u8], scope_key: &str, envelope: &[u8]) -> AppRe
 
     let encrypted = envelope
         .strip_prefix(DPAPI_BLOB_MAGIC)
+        .or_else(|| envelope.strip_prefix(LEGACY_DPAPI_BLOB_MAGIC))
         .ok_or_else(|| AppError::Other("旧形式または平文の保護データです".into()))?;
     let data_length = u32::try_from(encrypted.len())
         .map_err(|_| AppError::Other("保護データの暗号文が大きすぎます".into()))?;
@@ -131,7 +131,7 @@ pub fn unprotect_bytes(_domain: &[u8], _scope_key: &str, envelope: &[u8]) -> App
 }
 
 pub fn is_protected_blob(value: &[u8]) -> bool {
-    value.starts_with(DPAPI_BLOB_MAGIC)
+    value.starts_with(DPAPI_BLOB_MAGIC) || value.starts_with(LEGACY_DPAPI_BLOB_MAGIC)
 }
 
 pub fn is_protected_text(value: &str) -> bool {

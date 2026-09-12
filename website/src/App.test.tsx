@@ -24,15 +24,12 @@ describe("最新の紹介サイト", () => {
     expect(screen.getAllByText(/Windows資格情報マネージャー/).length).toBeGreaterThan(0);
   });
 
-  it("招待、クロスプレイ、共同管理の境界を正直に区別する", () => {
+  it("招待とクロスプレイの境界を正直に区別する", () => {
     render(<App />);
     expect(screen.getAllByText("条件付き").length).toBeGreaterThan(0);
     expect(screen.getByRole("heading", { name: "接続方式を選び、別の家の友達を招待" })).toBeInTheDocument();
     expect(screen.getByText(/Geyser／Floodgate/)).toBeInTheDocument();
-    expect(screen.queryByRole("heading", { level: 2, name: "ブラウザ遠隔管理" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("heading", { level: 2, name: "共同管理" })).not.toBeInTheDocument();
-    expect(screen.getByRole("heading", { level: 3, name: "共同管理" })).toBeInTheDocument();
-    expect(screen.getByText(/現行版にブラウザ遠隔管理・共同管理は含まれていません/)).toBeInTheDocument();
+    expect(screen.getByText(/アプリ画面は9言語に対応/)).toBeInTheDocument();
   });
 
   it("確認付きJava準備とローカル処理を正しく説明する", () => {

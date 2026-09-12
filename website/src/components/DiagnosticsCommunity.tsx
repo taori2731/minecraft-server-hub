@@ -71,7 +71,7 @@ export function DiagnosticsCommunity() {
     </section>
 
     <section className="privacy-band" aria-labelledby="privacy-title">
-      <div className="section"><SectionHeading id="privacy-title" title="診断もログ解析も、PCの中で" description="サーバー運用に必要なデータを、広告や外部診断のために送らない設計です。" /><div className="privacy-grid">{privacy.map(({ icon: Icon, title, body }) => <article key={title}><Icon aria-hidden="true" /><h3>{title}</h3><p>{body}</p></article>)}</div><p className="privacy-footnote"><Languages aria-hidden="true" />現行版にブラウザ遠隔管理・共同管理は含まれていません。アプリ画面は9言語に対応しますが、サーバーログや識別子は原文を保ちます。</p></div>
+      <div className="section"><SectionHeading id="privacy-title" title="診断もログ解析も、PCの中で" description="サーバー運用に必要なデータを、広告や外部診断のために送らない設計です。" /><div className="privacy-grid">{privacy.map(({ icon: Icon, title, body }) => <article key={title}><Icon aria-hidden="true" /><h3>{title}</h3><p>{body}</p></article>)}</div><p className="privacy-footnote"><Languages aria-hidden="true" />アプリ画面は9言語に対応しますが、サーバーログや識別子は原文を保ちます。</p></div>
     </section>
   </>;
 }

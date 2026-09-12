@@ -16,12 +16,33 @@ describe("Minecraft Server Hub", () => {
     render(<App />);
     expect(await screen.findByRole("heading", { name: "Survival World" })).toBeInTheDocument();
     expect((await screen.findAllByText("起動中")).length).toBeGreaterThan(0);
-    expect(screen.getByText("localhost:25565")).toBeInTheDocument();
+    expect(within(document.querySelector(".metric-grid")!).getByText("localhost:25565")).toBeInTheDocument();
     const monitor = screen.getByLabelText("負荷監視");
     expect(await within(monitor).findByText(/^[123] ms$/)).toBeInTheDocument();
     expect(within(monitor).getByText(/^19\.[89]$/)).toBeInTheDocument();
     expect(within(monitor).queryByText("未取得")).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /新しいサーバー/ })).toBeInTheDocument();
+    expect(within(document.querySelector(".titlebar")!).getByRole("button", { name: /新しいサーバー/ })).toBeInTheDocument();
+  });
+
+  it("filters servers without changing selection and selects Palworld from the home cards", async () => {
+    const { container } = render(<App />);
+    await screen.findByRole("heading", { name: "Survival World" });
+    const search = screen.getByRole("searchbox", { name: "サーバー一覧" });
+    fireEvent.change(search, { target: { value: "palworld" } });
+    const list = within(container.querySelector(".server-list")!);
+    expect(list.queryByText("Creative Test")).not.toBeInTheDocument();
+    expect(list.getByText("Palworld Friends")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Survival World" })).toBeInTheDocument();
+    fireEvent.change(search, { target: { value: "no matching server" } });
+    expect(list.getByText("0 / 3")).toBeInTheDocument();
+    fireEvent.click(list.getByRole("button", { name: "サーバー一覧" }));
+    expect(search).toHaveValue("");
+    expect(list.getByText("Creative Test")).toBeInTheDocument();
+    fireEvent.click(within(container.querySelector(".home-server-grid")!).getByRole("button", { name: /Palworld Friends/ }));
+    expect(await screen.findByRole("heading", { name: "Palworld Friends" })).toBeInTheDocument();
+    expect(container.querySelector(".sidebar-navigation")).not.toHaveTextContent("プラグイン・Mod");
+    fireEvent.click(within(container.querySelector(".home-inspector-links")!).getByRole("button", { name: "コンソール" }));
+    expect(await screen.findByText(/ログは読み取り専用/)).toBeInTheDocument();
   });
 
   it("switches to the Palworld adapter with its dedicated invite and without Minecraft-only tabs or command input", async () => {
@@ -30,7 +51,7 @@ describe("Minecraft Server Hub", () => {
     await screen.findByRole("heading", { name: "Survival World" });
     const minecraftNavigation = screen.getByRole("navigation", { name: "サーバー詳細" });
     fireEvent.click(within(minecraftNavigation).getByRole("button", { name: "ファイル" }));
-    fireEvent.click(screen.getByText("Palworld Friends").closest("button")!);
+    fireEvent.click(within(document.querySelector(".server-list")!).getByText("Palworld Friends").closest("button")!);
     expect(await screen.findByRole("heading", { name: "Palworld Friends" })).toBeInTheDocument();
     expect(await screen.findByRole("button", { name: "ワールドを保存" })).toBeInTheDocument();
 
@@ -103,7 +124,7 @@ describe("Minecraft Server Hub", () => {
   it("opens the creation wizard with PC diagnosis first", async () => {
     render(<App />);
     await screen.findByRole("heading", { name: "Survival World" });
-    fireEvent.click(screen.getByRole("button", { name: /新しいサーバー/ }));
+    fireEvent.click(within(document.querySelector(".titlebar")!).getByRole("button", { name: /新しいサーバー/ }));
     expect(await screen.findByRole("dialog")).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "PC診断" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "このPCを診断" })).toBeDisabled();
@@ -117,7 +138,7 @@ describe("Minecraft Server Hub", () => {
   it("diagnoses the PC and applies the recommendation in the wizard", async () => {
     render(<App />);
     await screen.findByRole("heading", { name: "Survival World" });
-    fireEvent.click(screen.getByRole("button", { name: /新しいサーバー/ }));
+    fireEvent.click(within(document.querySelector(".titlebar")!).getByRole("button", { name: /新しいサーバー/ }));
     fireEvent.click(await screen.findByRole("button", { name: "選択" }));
     const diagnoseButton = screen.getByRole("button", { name: "このPCを診断" });
     await waitFor(() => expect(diagnoseButton).toBeEnabled());
@@ -152,7 +173,7 @@ describe("Minecraft Server Hub", () => {
   it("offers manual PC recommendation application for a stopped server", async () => {
     render(<App />);
     await screen.findByRole("heading", { name: "Survival World" });
-    fireEvent.click(screen.getByText("Creative Test").closest("button")!);
+    fireEvent.click(within(document.querySelector(".server-list")!).getByText("Creative Test").closest("button")!);
     fireEvent.click(screen.getByRole("button", { name: "PCを診断" }));
     expect(await screen.findByRole("button", { name: "推奨値を設定へ反映" })).toBeEnabled();
   });
@@ -161,7 +182,7 @@ describe("Minecraft Server Hub", () => {
     vi.spyOn(window, "confirm").mockReturnValue(true);
     render(<App />);
     await screen.findByRole("heading", { name: "Survival World" });
-    fireEvent.click(screen.getByText("Creative Test").closest("button")!);
+    fireEvent.click(within(document.querySelector(".server-list")!).getByText("Creative Test").closest("button")!);
     fireEvent.click(within(screen.getByRole("navigation", { name: "サーバー詳細" })).getByRole("button", { name: "設定" }));
 
     const optimize = await screen.findByRole("button", { name: "バックアップして軽量化" });
@@ -182,7 +203,7 @@ describe("Minecraft Server Hub", () => {
   it("opens the read-only existing server import flow", async () => {
     render(<App />);
     await screen.findByRole("heading", { name: "Survival World" });
-    fireEvent.click(screen.getByRole("button", { name: /既存サーバーを取り込む/ }));
+    fireEvent.click(within(document.querySelector(".titlebar")!).getByRole("button", { name: /既存サーバーを取り込む/ }));
     expect(await screen.findByRole("dialog")).toBeInTheDocument();
     expect(screen.getByText("元のサーバーフォルダーを壊さずに調べます")).toBeInTheDocument();
   });
@@ -198,14 +219,6 @@ describe("Minecraft Server Hub", () => {
     expect(await screen.findByText("1件が互換")).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "サーバーテンプレート" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "確認付きサーバー更新" })).toBeInTheDocument();
-  });
-
-  it("exposes the co-management entrypoint without adding a server-detail tab", async () => {
-    const { container } = render(<App />);
-    await screen.findByRole("heading", { name: "Survival World" });
-    fireEvent.click(container.querySelector<HTMLButtonElement>(".sidebar-footer button")!);
-    expect(screen.getByRole("button", { name: "共同管理" })).toBeInTheDocument();
-    expect(screen.queryByRole("heading", { name: "ブラウザ遠隔管理と共同管理" })).not.toBeInTheDocument();
   });
 
   it("keeps safety features free and labels implemented Pro development features honestly", async () => {
@@ -249,7 +262,7 @@ describe("Minecraft Server Hub", () => {
     localStorage.setItem("server-hub:server-icons:v1", JSON.stringify({ "demo-vanilla": tinyPng }));
     render(<App />);
     await screen.findByRole("heading", { name: "Survival World" });
-    fireEvent.click(screen.getByText("Creative Test").closest("button")!);
+    fireEvent.click(within(document.querySelector(".server-list")!).getByText("Creative Test").closest("button")!);
     fireEvent.click(within(screen.getByRole("navigation", { name: "サーバー詳細" })).getByRole("button", { name: "設定" }));
     expect(screen.getByRole("img", { name: "サーバーアイコン" })).toHaveAttribute("src", tinyPng);
     expect(screen.getByLabelText("画像を選ぶ")).toHaveAttribute("accept", "image/png,image/jpeg,image/webp");
@@ -260,7 +273,7 @@ describe("Minecraft Server Hub", () => {
     vi.spyOn(window, "confirm").mockReturnValue(true);
     render(<App />);
     await screen.findByRole("heading", { name: "Survival World" });
-    fireEvent.click(screen.getByText("Creative Test").closest("button")!);
+    fireEvent.click(within(document.querySelector(".server-list")!).getByText("Creative Test").closest("button")!);
     fireEvent.click(screen.getByRole("button", { name: "安全ツール" }));
     fireEvent.change(screen.getByDisplayValue("1.21.11"), { target: { value: "1.21.12" } });
     fireEvent.click(screen.getByRole("button", { name: "安全確認" }));
@@ -276,7 +289,7 @@ describe("Minecraft Server Hub", () => {
   it("prepares a managed Java runtime only after an explicit review", async () => {
     render(<App />);
     await screen.findByRole("heading", { name: "Survival World" });
-    fireEvent.click(screen.getByText("Creative Test").closest("button")!);
+    fireEvent.click(within(document.querySelector(".server-list")!).getByText("Creative Test").closest("button")!);
     fireEvent.click(screen.getByRole("button", { name: "安全ツール" }));
     fireEvent.click(screen.getByRole("button", { name: "必要なJavaを自動で準備" }));
     expect(await screen.findByRole("dialog", { name: "Javaをアプリ内に準備" })).toBeInTheDocument();
@@ -296,7 +309,7 @@ describe("Minecraft Server Hub", () => {
   it("shows expanded server.properties controls", async () => {
     render(<App />);
     await screen.findByRole("heading", { name: "Survival World" });
-    fireEvent.click(screen.getByText("Creative Test").closest("button")!);
+    fireEvent.click(within(document.querySelector(".server-list")!).getByText("Creative Test").closest("button")!);
     fireEvent.click(screen.getAllByRole("button", { name: "設定" }).find((button) => button.closest(".tabs"))!);
     expect(screen.getByRole("heading", { name: "サーバー設定" })).toBeInTheDocument();
     expect(screen.getByText("公式アカウント認証")).toBeInTheDocument();
@@ -324,7 +337,7 @@ describe("Minecraft Server Hub", () => {
   it("switches between whitelist, operators and masked ban lists", async () => {
     render(<App />);
     await screen.findByRole("heading", { name: "Survival World" });
-    fireEvent.click(screen.getByRole("button", { name: "プレイヤー" }));
+    fireEvent.click(within(screen.getByRole("navigation", { name: "サーバー詳細" })).getByRole("button", { name: "プレイヤー" }));
     expect(await screen.findByRole("heading", { name: "プレイヤー管理" })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /権限者/ }));
     expect(await screen.findByText("ServerOwner", undefined, { timeout: 10_000 })).toBeInTheDocument();
@@ -337,8 +350,8 @@ describe("Minecraft Server Hub", () => {
   it("edits the whitelist before a stopped server is started", async () => {
     render(<App />);
     await screen.findByRole("heading", { name: "Survival World" });
-    fireEvent.click(screen.getByText("Creative Test").closest("button")!);
-    fireEvent.click(screen.getByRole("button", { name: "プレイヤー" }));
+    fireEvent.click(within(document.querySelector(".server-list")!).getByText("Creative Test").closest("button")!);
+    fireEvent.click(within(screen.getByRole("navigation", { name: "サーバー詳細" })).getByRole("button", { name: "プレイヤー" }));
     expect(await screen.findByText("停止中も編集可能")).toBeInTheDocument();
     expect(screen.getByText("起動前に登録できます")).toBeInTheDocument();
     fireEvent.change(screen.getByRole("textbox", { name: "プレイヤー名" }), { target: { value: "PreStartUser" } });
@@ -353,7 +366,7 @@ describe("Minecraft Server Hub", () => {
     vi.spyOn(window, "confirm").mockReturnValue(true);
     const { container } = render(<App />);
     await screen.findByRole("heading", { name: "Survival World" });
-    fireEvent.click(screen.getByText("Creative Test").closest("button")!);
+    fireEvent.click(within(document.querySelector(".server-list")!).getByText("Creative Test").closest("button")!);
     fireEvent.click(container.querySelector<HTMLButtonElement>(".sidebar-footer button")!);
     expect(await screen.findByRole("heading", { name: "いつものメンバー" })).toBeInTheDocument();
     fireEvent.change(screen.getByRole("textbox", { name: "固定メンバーのプレイヤー名" }), { target: { value: "FixedFriend" } });
@@ -361,7 +374,7 @@ describe("Minecraft Server Hub", () => {
     fireEvent.click(screen.getByRole("button", { name: "メンバーを保存" }));
     expect(await screen.findByText("FixedFriend")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "閉じる" }));
-    fireEvent.click(screen.getByRole("button", { name: "プレイヤー" }));
+    fireEvent.click(within(screen.getByRole("navigation", { name: "サーバー詳細" })).getByRole("button", { name: "プレイヤー" }));
     const whitelistApply = await screen.findByRole("button", { name: "ホワイトリストへ反映（1人）" });
     expect(whitelistApply).toBeEnabled();
     fireEvent.click(whitelistApply);
@@ -386,7 +399,7 @@ describe("Minecraft Server Hub", () => {
     fireEvent.click(screen.getByRole("button", { name: "メンバーを保存" }));
     expect(await screen.findByText("Bedrock Friend")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "閉じる" }));
-    fireEvent.click(screen.getByRole("button", { name: "プレイヤー" }));
+    fireEvent.click(within(screen.getByRole("navigation", { name: "サーバー詳細" })).getByRole("button", { name: "プレイヤー" }));
     fireEvent.click(await screen.findByRole("button", { name: /統合版ホワイトリスト/ }));
     const apply = await screen.findByRole("button", { name: "統合版ホワイトリストへ反映（1人）" });
     expect(apply).toBeEnabled();
@@ -428,7 +441,7 @@ describe("Minecraft Server Hub", () => {
     vi.spyOn(window, "confirm").mockReturnValue(true);
     render(<App />);
     await screen.findByRole("heading", { name: "Survival World" });
-    fireEvent.click(screen.getByText("Creative Test").closest("button")!);
+    fireEvent.click(within(document.querySelector(".server-list")!).getByText("Creative Test").closest("button")!);
     fireEvent.click(screen.getByRole("button", { name: "拡張機能" }));
     expect(await screen.findByRole("button", { name: /Terralith/ })).toBeInTheDocument();
     fireEvent.change(screen.getByRole("textbox", { name: "データパックを検索" }), { target: { value: "Terralith" } });
@@ -524,7 +537,7 @@ describe("Minecraft Server Hub", () => {
     vi.spyOn(window, "confirm").mockReturnValue(true);
     render(<App />);
     await screen.findByRole("heading", { name: "Survival World" });
-    fireEvent.click(screen.getByText("Creative Test").closest("button")!);
+    fireEvent.click(within(document.querySelector(".server-list")!).getByText("Creative Test").closest("button")!);
     fireEvent.click(screen.getByRole("button", { name: "友達を招待" }));
     const tunnelHeading = await screen.findByRole("heading", { name: "ポート開放なしで友達を招待" });
     const tunnelPanel = within(tunnelHeading.closest("section")!);
@@ -561,7 +574,7 @@ describe("Minecraft Server Hub", () => {
     fireEvent.click(await screen.findByRole("button", { name: "言語" }));
     const language = await screen.findByRole("combobox", { name: "表示言語" });
     fireEvent.change(language, { target: { value: "en" } });
-    expect(await screen.findByRole("button", { name: /New server/ })).toBeInTheDocument();
+    expect(await within(document.querySelector(".titlebar")!).findByRole("button", { name: /New server/ })).toBeInTheDocument();
     expect(screen.getByRole("navigation", { name: "Server details" })).toBeInTheDocument();
     expect(screen.getByRole("status")).toHaveTextContent("Language preference saved");
     expect(localStorage.getItem("server-hub:language:v1")).toBe("en");
