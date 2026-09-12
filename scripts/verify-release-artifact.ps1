@@ -3,7 +3,8 @@ param(
     [string]$InstallerPath,
     [string]$ManifestPath,
     [string]$ExpectedVersion,
-    [string]$OutputPath
+    [string]$OutputPath,
+    [string]$ChecksumPath
 )
 
 $ErrorActionPreference = "Stop"
@@ -51,8 +52,21 @@ $manifestFile = Resolve-RequiredPath $ManifestPath
 
 $manifest = Get-Content -LiteralPath $manifestFile -Raw -Encoding UTF8 | ConvertFrom-Json
 $platform = $manifest.platforms.'windows-x86_64'
+if ($null -eq $platform) {
+    throw "The update manifest has no windows-x86_64 platform entry."
+}
 $installerName = [System.IO.Path]::GetFileName($installer)
-$manifestUrlName = [System.IO.Path]::GetFileName(([Uri]$platform.url).AbsolutePath)
+$manifestUrl = [string]$platform.url
+$manifestUri = $null
+if (-not [Uri]::TryCreate($manifestUrl, [UriKind]::Absolute, [ref]$manifestUri) -or
+    $manifestUri.Scheme -ne "https" -or
+    [string]::IsNullOrWhiteSpace($manifestUri.Host) -or
+    -not [string]::IsNullOrWhiteSpace($manifestUri.UserInfo) -or
+    -not [string]::IsNullOrWhiteSpace($manifestUri.Query) -or
+    -not [string]::IsNullOrWhiteSpace($manifestUri.Fragment)) {
+    throw "Manifest URL must be an authentication-free absolute HTTPS URL without a query or fragment."
+}
+$manifestUrlName = [System.IO.Path]::GetFileName($manifestUri.AbsolutePath)
 $signatureText = Read-RequiredText $signature
 $manifestSignature = [string]$platform.signature
 $manifestVersion = [string]$manifest.version
@@ -64,12 +78,15 @@ $packageLockVersion = if ($packageLockText -match '(?m)^\s*"version"\s*:\s*"([^"
 $packageLockRootVersion = if ($packageLockText -match '(?s)"packages"\s*:\s*\{\s*""\s*:\s*\{.*?"version"\s*:\s*"([^"]+)"') { $Matches[1] } else { "" }
 $cargoToml = Get-Content -LiteralPath (Join-Path $workspaceRoot "src-tauri\Cargo.toml") -Raw -Encoding UTF8
 $cargoVersion = if ($cargoToml -match '(?m)^version\s*=\s*"([^"]+)"$') { $Matches[1] } else { "" }
+$cargoLockText = Get-Content -LiteralPath (Join-Path $workspaceRoot "src-tauri\Cargo.lock") -Raw -Encoding UTF8
+$cargoLockVersion = if ($cargoLockText -match '(?ms)\[\[package\]\]\s*name\s*=\s*"minecraft-server-hub"\s*version\s*=\s*"([^"]+)"') { $Matches[1] } else { "" }
 $tauriJson = Get-Content -LiteralPath (Join-Path $workspaceRoot "src-tauri\tauri.conf.json") -Raw -Encoding UTF8 | ConvertFrom-Json
 $versionSources = [ordered]@{
     package = [string]$packageJson.version
     packageLock = [string]$packageLockVersion
     packageLockRoot = [string]$packageLockRootVersion
     cargo = [string]$cargoVersion
+    cargoLock = [string]$cargoLockVersion
     tauri = [string]$tauriJson.version
 }
 
@@ -92,6 +109,29 @@ if ($versionSources.Values | Where-Object { $_ -ne $ExpectedVersion }) {
 }
 if ($publicKey -ne $configuredPublicKey) {
     throw "Embedded updater public key and Tauri configuration public key differ."
+}
+
+$checksumFile = $null
+$checksumChecked = $false
+if ([string]::IsNullOrWhiteSpace($ChecksumPath)) {
+    $adjacentChecksum = Join-Path (Split-Path -Parent $installer) "SHA256SUMS.txt"
+    if (Test-Path -LiteralPath $adjacentChecksum -PathType Leaf) {
+        $ChecksumPath = $adjacentChecksum
+    }
+}
+if (-not [string]::IsNullOrWhiteSpace($ChecksumPath)) {
+    $checksumFile = Resolve-RequiredPath $ChecksumPath
+    $checksumLine = Get-Content -LiteralPath $checksumFile -Encoding UTF8 |
+        Where-Object { $_ -match ('^(?<hash>[0-9A-Fa-f]{64})\s+\*?' + [regex]::Escape($installerName) + '$') } |
+        Select-Object -First 1
+    if ([string]::IsNullOrWhiteSpace([string]$checksumLine)) {
+        throw "SHA256SUMS.txt has no entry for $installerName."
+    }
+    $checksumMatch = [regex]::Match([string]$checksumLine, '^(?<hash>[0-9A-Fa-f]{64})\s+\*?')
+    if (-not $checksumMatch.Success -or $checksumMatch.Groups["hash"].Value.ToUpperInvariant() -ne $installerHash) {
+        throw "SHA256SUMS.txt does not match the selected installer."
+    }
+    $checksumChecked = $true
 }
 
 $previousArtifact = $env:MSH_UPDATER_ARTIFACT
@@ -121,7 +161,9 @@ $report = [ordered]@{
     installerSizeBytes = (Get-Item -LiteralPath $installer).Length
     installerSha256 = $installerHash
     signatureVerified = $true
-    authenticodeStatus = "not-checked (Tauri minisign is the release signature)"
+    sha256MatchesChecksumFile = $checksumChecked
+    checksumPath = if ($checksumFile) { Get-WorkspaceRelativePath $checksumFile } else { "" }
+    authenticodeStatus = "not-required (Tauri minisign is the release signature)"
     sourceVersions = $versionSources
     manifest = [ordered]@{
         version = $manifestVersion

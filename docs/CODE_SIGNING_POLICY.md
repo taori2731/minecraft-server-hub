@@ -2,45 +2,64 @@
 
 ## Status
 
-This policy is effective for the public repository. The SignPath Foundation application is pending; no SignPath Foundation certificate is currently active and no installer is described as SignPath-signed until the request is approved and the resulting signature is independently verified.
+The normal Windows in-app update path uses the same Tauri Updater detached Minisign signature model as release 0.3.9. A valid Tauri updater signature is mandatory. SignPath and Windows Authenticode are not dependencies or required gates for this path.
 
-The intended service is: **Free code signing provided by SignPath.io, certificate by SignPath Foundation**.
+Authenticode may be added later as an optional publisher-reputation layer, but its presence or `Valid` status must not be confused with the Tauri update-integrity decision. The release workflow does not submit artifacts to an external signing service.
 
 ## Scope
 
-The policy covers the Windows NSIS installer produced from this repository. The Tauri updater's detached Minisign signature is a separate integrity layer and uses a private key stored outside the repository. Windows Authenticode and the Tauri updater signature must both be verified after the final installer bytes are produced.
+This policy covers the Windows x64 NSIS installer and its adjacent `.sig` file. The updater public key is embedded in both `src-tauri/updater-public.key` and `src-tauri/tauri.conf.json`; those values must remain unchanged while releases signed by the current key are in use.
 
-The developer-tools installer will follow the same policy only after its own artifact configuration, version metadata, and clean-install evidence are reviewed.
+The developer-tools installer has its own configuration and feed. It is not included in the main application's 0.3.10 release gate.
 
 ## Roles
 
-Until additional maintainers are formally added:
+- Committers and reviewers: [`taori2731`](https://github.com/taori2731), the repository owner.
+- Release approver: [`taori2731`](https://github.com/taori2731), responsible for approving the exact 0.3.10 candidate after all pre-public checks pass.
+- Release repository: [`taori2731/minecraft-server-hub-releases`](https://github.com/taori2731/minecraft-server-hub-releases).
 
-- Committers and reviewers: [`taori2731`](https://github.com/taori2731), the repository owner. Changes to source, build scripts, workflow files, and signing policy are reviewed through the repository's normal change process.
-- Approver: [`taori2731`](https://github.com/taori2731), responsible for approving a specific release candidate for signing after the release gates pass.
+## Secrets
 
-SignPath organization and project identifiers are intentionally kept in SignPath/GitHub configuration rather than source control. The signing workflow fails closed when those values or the API token are not configured.
+- `TAURI_SIGNING_PRIVATE_KEY` contains the existing Tauri updater private key and is supplied only to the build/sign steps.
+- `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` is supplied only when that key is encrypted.
+- `RELEASE_REPO_TOKEN` is a separate least-privilege GitHub token used to create and publish the Draft in the release repository.
 
-## Build and signing flow
+No secret value may be committed, printed, placed in an artifact, included in `latest.json`, or pasted into an issue or chat. If the existing private key is missing or does not produce a signature accepted by the embedded public key, the release stops. A replacement key must not be generated for 0.3.10.
 
-1. A release candidate is built by the manual GitHub Actions workflow on the `main` branch using a GitHub-hosted Windows runner.
-2. The version must match the repository metadata. The Tauri updater private key is supplied only as a GitHub Actions secret; it is never committed, printed, or placed in a public artifact.
-3. The unsigned NSIS installer is uploaded to GitHub Actions before the SignPath request. SignPath verifies the GitHub workflow origin and the artifact provenance.
-4. SignPath receives the artifact and waits for the project's manual approval. A missing project, policy, token, or approval stops the workflow.
-5. The returned Authenticode-signed installer is given a new Tauri updater signature because Authenticode changes the final executable bytes.
-6. The workflow verifies Authenticode, verifies the Tauri signature with the embedded public key, creates `latest.json`, records SHA-256, and uploads a release bundle for the release owner to inspect.
-7. Only after clean Windows install, uninstall, reinstall, update, and rollback checks pass may the exact bundle be published to the release repository.
+## Required release flow
 
-The workflow does not automatically publish to the release repository. This keeps signing approval, release review, and external distribution as separate decisions.
+The manually dispatched `Release Windows updater` workflow accepts only `main`, `version=0.3.10`, and `release_tag=v0.3.10`. It:
 
-## Privacy and third-party services
+1. checks all JavaScript, Rust, Cargo, and Tauri version sources;
+2. checks that the updater public key matches the Tauri configuration and was not changed in the release commit;
+3. runs application, Rust, developer-tools, UI, and website regression checks;
+4. builds the Windows x64 NSIS installer;
+5. signs the final release bytes with the Tauri updater private key;
+6. verifies the adjacent `.sig` using the embedded public key;
+7. calculates SHA-256 and generates an authentication-free HTTPS `latest.json`;
+8. saves the exact pre-public bundle as an Actions Artifact;
+9. refuses to reuse an existing release or tag and creates `v0.3.10` as a Draft;
+10. downloads the three updater files from the Draft and verifies their identity and signature;
+11. publishes the verified Draft as Latest;
+12. downloads the public Latest feed and assets again and compares their SHA-256 values to the local candidate.
 
-This program will not transfer any information to other networked systems unless specifically requested by the user or the person installing or operating it. Optional downloads and relay connections are user-requested features and are described in the README and the third-party notices. SignPath, GitHub Actions, Cloudflare, the optional relay hosting provider, game distribution services, Modrinth, and playit.gg each have their own terms and privacy policies; users must review those services before enabling the corresponding feature.
+The public asset set is:
 
-The developer-tools dependency/advisory checks are development and release checks. They are not an in-app network or vulnerability scanner and do not automatically contact an advisory service.
+- `Minecraft.Server.Hub_0.3.10_x64-setup.exe`
+- `Minecraft.Server.Hub_0.3.10_x64-setup.exe.sig`
+- `latest.json`
+- `SHA256SUMS.txt`
 
-## Release gate
+No Authenticode `Valid` check is part of these gates. The optional `-CheckAuthenticode` and `-RequireAuthenticode` switches in the local QA helper are explicitly outside the normal app-update policy.
 
-An unsigned installer may be used for local QA only. It must not be represented as a trusted public release. The current release procedure remains the authoritative checklist for Tauri updater key rotation, Authenticode verification, artifact hashes, and clean-environment acceptance.
+## Existing-release compatibility
 
-Existing releases and installed versions must be migrated before changing the embedded updater public key. Follow the [updater key rotation migration procedure](UPDATER_KEY_ROTATION_MIGRATION.md); do not replace a public key in source control without a tested manual bootstrap or equivalent transition path.
+The public key and the Tauri configuration key must not change for 0.3.10. This preserves the ability of installed 0.3.9 applications to validate the 0.3.10 update. The 0.3.9 Release and its assets are never deleted or overwritten by the workflow.
+
+Key rotation is a separate migration project. It requires a tested bootstrap or manual-install path for every supported installed version before the new public key is published.
+
+## Integrity and privacy
+
+The updater signature authenticates the exact installer bytes. The manifest signature must equal the adjacent `.sig`; the manifest URL must be absolute HTTPS without user information, a query, or a fragment; and the URL filename must equal the selected installer filename. SHA-256 is an additional transfer-integrity comparison, not a replacement for the Tauri signature.
+
+The normal release path does not send the installer to an external signing service. GitHub Actions receives only the configured build secrets and publishes only the four listed release assets.

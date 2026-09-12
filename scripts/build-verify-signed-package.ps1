@@ -11,6 +11,10 @@ param(
     [switch]$RequireAuthenticode,
 
     [Parameter(ParameterSetName = "Build")]
+    [Parameter(ParameterSetName = "Verify")]
+    [switch]$CheckAuthenticode,
+
+    [Parameter(ParameterSetName = "Build")]
     [string]$TargetDir,
     [string]$OutputPath
 )
@@ -42,6 +46,7 @@ if ([string]::IsNullOrWhiteSpace($version) -or [string]::IsNullOrWhiteSpace($pro
 }
 
 $isBuild = $PSCmdlet.ParameterSetName -eq "Build"
+$shouldCheckAuthenticode = [bool]($CheckAuthenticode -or $RequireAuthenticode)
 $signingKey = $null
 $target = $null
 $key = $null
@@ -57,6 +62,10 @@ if ($isBuild) {
     $signingKey = Get-Content -LiteralPath $key -Raw -Encoding UTF8
     if ([string]::IsNullOrWhiteSpace($signingKey)) {
         throw "Signing key is empty: $key"
+    }
+    if ($signingKey -match '(?im)minisign encrypted secret key' -and
+        [string]::IsNullOrWhiteSpace([Environment]::GetEnvironmentVariable("TAURI_SIGNING_PRIVATE_KEY_PASSWORD", [EnvironmentVariableTarget]::Process))) {
+        throw "The encrypted Tauri updater key requires TAURI_SIGNING_PRIVATE_KEY_PASSWORD in the current process environment."
     }
 
     if ([string]::IsNullOrWhiteSpace($TargetDir)) {
@@ -83,6 +92,7 @@ else {
 $environmentNames = @(
     "CARGO_TARGET_DIR",
     "TAURI_SIGNING_PRIVATE_KEY",
+    "TAURI_SIGNING_PRIVATE_KEY_PASSWORD",
     "MSH_UPDATER_ARTIFACT",
     "MSH_AUTHENTICODE_TARGET"
 )
@@ -134,24 +144,26 @@ try {
     $authenticodeStatus = "NotChecked"
     $authenticodeSubject = ""
     $authenticodeError = ""
-    try {
-        Set-ProcessEnvironmentValue "MSH_AUTHENTICODE_TARGET" $installer
-        $authenticodeCommand = '$env:PSModulePath=(Join-Path $env:SystemRoot "System32\WindowsPowerShell\v1.0\Modules"); $target=[Environment]::GetEnvironmentVariable("MSH_AUTHENTICODE_TARGET","Process"); $signature=Get-AuthenticodeSignature -LiteralPath $target; [pscustomobject]@{status=[string]$signature.Status;subject=if($signature.SignerCertificate){[string]$signature.SignerCertificate.Subject}else{""}} | ConvertTo-Json -Compress'
-        $authenticodeEncodedCommand = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($authenticodeCommand))
-        $authenticodeOutput = & powershell -NoProfile -EncodedCommand $authenticodeEncodedCommand 2>&1
-        if ($LASTEXITCODE -ne 0) {
-            throw "Authenticode subprocess failed with exit code $LASTEXITCODE."
+    if ($shouldCheckAuthenticode) {
+        try {
+            Set-ProcessEnvironmentValue "MSH_AUTHENTICODE_TARGET" $installer
+            $authenticodeCommand = '$env:PSModulePath=(Join-Path $env:SystemRoot "System32\WindowsPowerShell\v1.0\Modules"); $target=[Environment]::GetEnvironmentVariable("MSH_AUTHENTICODE_TARGET","Process"); $signature=Get-AuthenticodeSignature -LiteralPath $target; [pscustomobject]@{status=[string]$signature.Status;subject=if($signature.SignerCertificate){[string]$signature.SignerCertificate.Subject}else{""}} | ConvertTo-Json -Compress'
+            $authenticodeEncodedCommand = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($authenticodeCommand))
+            $authenticodeOutput = & powershell -NoProfile -EncodedCommand $authenticodeEncodedCommand 2>&1
+            if ($LASTEXITCODE -ne 0) {
+                throw "Authenticode subprocess failed with exit code $LASTEXITCODE."
+            }
+            $authenticode = ($authenticodeOutput -join "`n") | ConvertFrom-Json
+            $authenticodeStatus = [string]$authenticode.status
+            $authenticodeSubject = [string]$authenticode.subject
+            if ([string]::IsNullOrWhiteSpace($authenticodeStatus)) {
+                throw "Authenticode subprocess returned no status."
+            }
         }
-        $authenticode = ($authenticodeOutput -join "`n") | ConvertFrom-Json
-        $authenticodeStatus = [string]$authenticode.status
-        $authenticodeSubject = [string]$authenticode.subject
-        if ([string]::IsNullOrWhiteSpace($authenticodeStatus)) {
-            throw "Authenticode subprocess returned no status."
+        catch {
+            $authenticodeError = $_.Exception.Message
+            Write-Warning "Authenticode status could not be inspected; Tauri updater verification already passed."
         }
-    }
-    catch {
-        $authenticodeError = $_.Exception.Message
-        Write-Warning "Authenticode status could not be inspected; Tauri updater verification already passed."
     }
     $sha256 = [System.Security.Cryptography.SHA256]::Create()
     try {
@@ -172,7 +184,8 @@ try {
         installerSha256 = $installerHash.ToUpperInvariant()
         signatureBytes = (Get-Item -LiteralPath $signaturePath).Length
         updaterSignatureVerified = $true
-        authenticodeStatus = $authenticodeStatus
+        authenticodeChecked = $shouldCheckAuthenticode
+        authenticodeStatus = if ($shouldCheckAuthenticode) { $authenticodeStatus } else { "NotRequired" }
         authenticodeSubject = $authenticodeSubject
         authenticodeError = $authenticodeError
         authenticodeRequired = [bool]$RequireAuthenticode

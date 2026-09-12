@@ -50,7 +50,7 @@ Rustバックエンドは `cd src-tauri; cargo test`、紹介サイトは `cd we
 
 ## Code signing policy
 
-Free code signing provided by SignPath.io, certificate by SignPath Foundation (application pending). See the [Code signing policy](docs/CODE_SIGNING_POLICY.md) and the [updater key rotation migration procedure](docs/UPDATER_KEY_ROTATION_MIGRATION.md). Until a signed release is published, installers may remain unsigned and are for local QA only.
+通常のアプリ内更新は、0.3.9と同じTauri Updater署名を必須とします。SignPathとWindows Authenticodeは通常更新の必須条件ではありません。秘密鍵を含まないローカルQAと、公開用の署名済み資産を混同しないため、詳細は[コード署名ポリシー](docs/CODE_SIGNING_POLICY.md)と[アプリ更新の配布手順](docs/APP_UPDATE_RELEASE.md)を参照してください。
 
 ## License
 

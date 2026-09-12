@@ -20,6 +20,22 @@ if (-not (Test-Path -LiteralPath $signaturePath -PathType Leaf)) {
     throw "Updater signature was not found: $signaturePath"
 }
 
+$downloadUri = $null
+if (-not [Uri]::TryCreate($DownloadUrl, [UriKind]::Absolute, [ref]$downloadUri) -or
+    $downloadUri.Scheme -ne "https" -or
+    [string]::IsNullOrWhiteSpace($downloadUri.Host) -or
+    -not [string]::IsNullOrWhiteSpace($downloadUri.UserInfo) -or
+    -not [string]::IsNullOrWhiteSpace($downloadUri.Query) -or
+    -not [string]::IsNullOrWhiteSpace($downloadUri.Fragment)) {
+    throw "DownloadUrl must be an authentication-free absolute HTTPS URL without a query or fragment."
+}
+
+$installerName = [System.IO.Path]::GetFileName($resolvedInstaller)
+$urlInstallerName = [System.IO.Path]::GetFileName($downloadUri.AbsolutePath)
+if ([string]::IsNullOrWhiteSpace($urlInstallerName) -or $urlInstallerName -ne $installerName) {
+    throw "DownloadUrl must point to the selected installer filename: $installerName"
+}
+
 $signature = (Get-Content -LiteralPath $signaturePath -Raw -ErrorAction Stop).Trim()
 if ([string]::IsNullOrWhiteSpace($signature)) {
     throw "Updater signature is empty: $signaturePath"

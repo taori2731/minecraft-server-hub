@@ -1,14 +1,14 @@
-name: Sign Windows release
+name: Release Windows updater
 
 on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Must exactly match package.json"
+        description: "Must be 0.3.10 and match every package manifest"
         required: true
         type: string
       release_tag:
-        description: "Release tag in minecraft-server-hub-releases, for example v0.3.10"
+        description: "Must be v0.3.10 in minecraft-server-hub-releases"
         required: true
         type: string
 
@@ -17,57 +17,138 @@ permissions:
   actions: read
 
 concurrency:
-  group: sign-windows-release-${{ github.ref }}
+  group: release-windows-updater-${{ github.ref }}
   cancel-in-progress: false
+
+env:
+  RELEASE_REPOSITORY: taori2731/minecraft-server-hub-releases
 
 jobs:
   preflight:
-    name: Check release and signing configuration
+    name: Preflight release and signing configuration
     runs-on: windows-latest
     steps:
       - name: Check out source
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 2
 
-      - name: Fail closed when release inputs or secrets are missing
+      - name: Fail closed on release inputs, versions, keys, and publication access
         shell: pwsh
         env:
           RELEASE_VERSION: ${{ inputs.version }}
           RELEASE_TAG: ${{ inputs.release_tag }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-          SIGNPATH_API_TOKEN: ${{ secrets.SIGNPATH_API_TOKEN }}
-          SIGNPATH_ORGANIZATION_ID: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
-          SIGNPATH_PROJECT_SLUG: ${{ vars.SIGNPATH_PROJECT_SLUG }}
-          SIGNPATH_SIGNING_POLICY_SLUG: ${{ vars.SIGNPATH_SIGNING_POLICY_SLUG }}
+          RELEASE_REPO_TOKEN: ${{ secrets.RELEASE_REPO_TOKEN }}
         run: |
           $ErrorActionPreference = "Stop"
           if ($env:GITHUB_REF -ne "refs/heads/main") {
-            throw "Signing is allowed only from the main branch. Ref: $env:GITHUB_REF"
+            throw "The updater release workflow may run only from main."
           }
-          $package = Get-Content -LiteralPath "package.json" -Raw | ConvertFrom-Json
-          if ([string]$package.version -ne $env:RELEASE_VERSION) {
-            throw "workflow version does not match package.json"
+          if ($env:RELEASE_VERSION -ne "0.3.10") {
+            throw "This guarded workflow is for version 0.3.10 only."
           }
-          if ($env:RELEASE_TAG -notmatch '^v\d+\.\d+\.\d+([.-][0-9A-Za-z.-]+)?$') {
-            throw "release-tag must be a version tag such as v0.3.10"
+          if ($env:RELEASE_TAG -ne "v0.3.10") {
+            throw "This guarded workflow is for release tag v0.3.10 only."
           }
-          $required = @{
-            TAURI_SIGNING_PRIVATE_KEY = $env:TAURI_SIGNING_PRIVATE_KEY
-            TAURI_SIGNING_PRIVATE_KEY_PASSWORD = $env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD
-            SIGNPATH_API_TOKEN = $env:SIGNPATH_API_TOKEN
-            SIGNPATH_ORGANIZATION_ID = $env:SIGNPATH_ORGANIZATION_ID
-            SIGNPATH_PROJECT_SLUG = $env:SIGNPATH_PROJECT_SLUG
-            SIGNPATH_SIGNING_POLICY_SLUG = $env:SIGNPATH_SIGNING_POLICY_SLUG
-          }
-          $missing = @($required.GetEnumerator() | Where-Object { [string]::IsNullOrWhiteSpace([string]$_.Value) } | ForEach-Object { $_.Key })
-          if ($missing.Count -gt 0) {
-            throw "Signing configuration is incomplete: $($missing -join ', ')"
-          }
-          Write-Output "Release preflight passed for version $env:RELEASE_VERSION. Secret contents were not displayed."
 
-  build-and-sign:
-    name: Build, approve, sign, and verify
+          $package = Get-Content -LiteralPath "package.json" -Raw -Encoding UTF8 | ConvertFrom-Json
+          $packageLock = Get-Content -LiteralPath "package-lock.json" -Raw -Encoding UTF8 | ConvertFrom-Json
+          $cargoToml = Get-Content -LiteralPath "src-tauri/Cargo.toml" -Raw -Encoding UTF8
+          $cargoLock = Get-Content -LiteralPath "src-tauri/Cargo.lock" -Raw -Encoding UTF8
+          $tauriConfig = Get-Content -LiteralPath "src-tauri/tauri.conf.json" -Raw -Encoding UTF8 | ConvertFrom-Json
+          $cargoVersion = if ($cargoToml -match '(?m)^version\s*=\s*"([^"]+)"$') { $Matches[1] } else { "" }
+          $cargoLockVersion = if ($cargoLock -match '(?ms)\[\[package\]\]\s*name\s*=\s*"minecraft-server-hub"\s*version\s*=\s*"([^"]+)"') { $Matches[1] } else { "" }
+          $versions = [ordered]@{
+            package = [string]$package.version
+            packageLock = [string]$packageLock.version
+            packageLockRoot = [string]$packageLock.packages[''].version
+            cargo = [string]$cargoVersion
+            cargoLock = [string]$cargoLockVersion
+            tauri = [string]$tauriConfig.version
+          }
+          $mismatches = @($versions.GetEnumerator() | Where-Object { $_.Value -ne $env:RELEASE_VERSION } | ForEach-Object { "$($_.Key)=$($_.Value)" })
+          if ($mismatches.Count -gt 0) {
+            throw "Release metadata does not consistently equal $env:RELEASE_VERSION: $($mismatches -join ', ')"
+          }
+
+          $publicKey = (Get-Content -LiteralPath "src-tauri/updater-public.key" -Raw -Encoding UTF8).Trim()
+          $configuredKey = ([string]$tauriConfig.plugins.updater.pubkey).Trim()
+          if ([string]::IsNullOrWhiteSpace($publicKey) -or $publicKey -ne $configuredKey) {
+            throw "The embedded updater public key and tauri.conf.json updater key must match."
+          }
+          $changedKey = @(git diff --name-only HEAD^ HEAD -- src-tauri/updater-public.key)
+          if ($changedKey.Count -gt 0) {
+            throw "The 0.3.10 release commit must not change src-tauri/updater-public.key."
+          }
+
+          if ([string]::IsNullOrWhiteSpace($env:TAURI_SIGNING_PRIVATE_KEY)) {
+            throw "TAURI_SIGNING_PRIVATE_KEY is required. Do not generate a replacement key for this release."
+          }
+          if ($env:TAURI_SIGNING_PRIVATE_KEY -match '(?im)minisign encrypted secret key' -and [string]::IsNullOrWhiteSpace($env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD)) {
+            throw "TAURI_SIGNING_PRIVATE_KEY_PASSWORD is required for an encrypted updater key."
+          }
+          if ([string]::IsNullOrWhiteSpace($env:RELEASE_REPO_TOKEN)) {
+            throw "RELEASE_REPO_TOKEN is required to publish the separate release repository."
+          }
+          Write-Output "Preflight passed for $env:RELEASE_VERSION/$env:RELEASE_TAG. Secret values were not displayed."
+
+  regression-tests:
+    name: JavaScript, Rust, UI, and website regression tests
     needs: preflight
+    runs-on: windows-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+
+      - name: Install locked JavaScript dependencies
+        run: npm ci
+
+      - name: Run application type check
+        run: npm run check
+
+      - name: Run application regression tests
+        run: npm test -- --maxWorkers=2 --reporter=dot
+
+      - name: Check Rust formatting
+        run: cargo fmt --check --manifest-path src-tauri/Cargo.toml
+
+      - name: Run Rust library tests
+        run: cargo test --locked --manifest-path src-tauri/Cargo.toml --lib
+
+      - name: Run developer-tools tests
+        run: npm run test:developer-tools
+
+      - name: Build developer-tools
+        run: npm run build:developer-tools
+
+      - name: Run UI smoke tests
+        run: npm run test:ui
+
+      - name: Run website tests
+        run: npm --prefix website test -- --run
+
+      - name: Build website
+        run: npm --prefix website run build
+
+      - name: Build application frontend
+        run: npm run build
+
+  release:
+    name: Build, sign, draft, publish, and re-verify
+    needs:
+      - preflight
+      - regression-tests
     runs-on: windows-latest
     permissions:
       contents: read
@@ -88,104 +169,322 @@ jobs:
       - name: Install locked JavaScript dependencies
         run: npm ci
 
-      - name: Build the unsigned Tauri NSIS installer
+      - name: Build Windows x64 NSIS installer with the existing Tauri key
         shell: pwsh
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: npm run tauri -- build --bundles nsis --ci
 
-      - name: Locate exactly one unsigned installer
-        id: locate_unsigned
+      - name: Copy installer to the stable release asset name
+        id: package
         shell: pwsh
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
         run: |
           $ErrorActionPreference = "Stop"
-          $files = @(Get-ChildItem -LiteralPath "src-tauri/target/release/bundle/nsis" -Filter "*_x64-setup.exe" -File)
-          if ($files.Count -ne 1) {
-            throw "Expected exactly one NSIS installer, found $($files.Count)."
+          $generated = @(Get-ChildItem -LiteralPath "src-tauri/target/release/bundle/nsis" -Filter "*_x64-setup.exe" -File)
+          if ($generated.Count -ne 1) {
+            throw "Expected exactly one Windows x64 NSIS installer, found $($generated.Count)."
           }
-          "path=$($files[0].FullName)" >> $env:GITHUB_OUTPUT
-
-      - name: Upload the unsigned installer for origin verification
-        id: upload_unsigned
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
-        with:
-          name: unsigned-installer-${{ inputs.version }}
-          path: ${{ steps.locate_unsigned.outputs.path }}
-          archive: false
-
-      - name: Submit the signing request and wait for manual approval
-        id: signpath
-        uses: signpath/github-action-submit-signing-request@c92b958760219087e01f8d67a1669ed57afe2627 # v2
-        with:
-          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
-          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
-          project-slug: ${{ vars.SIGNPATH_PROJECT_SLUG }}
-          signing-policy-slug: ${{ vars.SIGNPATH_SIGNING_POLICY_SLUG }}
-          github-artifact-id: ${{ steps.upload_unsigned.outputs.artifact-id }}
-          wait-for-completion: true
-          output-artifact-directory: signed
-          skip-decompress: true
-
-      - name: Replace the installer with the returned Authenticode-signed artifact
-        id: locate_signed
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = "Stop"
-          $signed = @(Get-ChildItem -LiteralPath "signed" -Filter "*.exe" -File -Recurse)
-          if ($signed.Count -ne 1) {
-            throw "Expected exactly one signed installer from SignPath, found $($signed.Count)."
+          $generatedSignature = "$($generated[0].FullName).sig"
+          if (-not (Test-Path -LiteralPath $generatedSignature -PathType Leaf)) {
+            throw "Tauri did not generate the adjacent updater signature for the built installer."
+          }
+          if ([string]::IsNullOrWhiteSpace((Get-Content -LiteralPath $generatedSignature -Raw -Encoding UTF8))) {
+            throw "The generated Tauri updater signature is empty."
           }
           $releaseDir = Join-Path $PWD "artifacts/release"
           New-Item -ItemType Directory -Force -Path $releaseDir | Out-Null
-          $destination = Join-Path $releaseDir $signed[0].Name
-          Copy-Item -LiteralPath $signed[0].FullName -Destination $destination -Force
-          "path=$destination" >> $env:GITHUB_OUTPUT
+          $assetName = "Minecraft.Server.Hub_${env:RELEASE_VERSION}_x64-setup.exe"
+          $destination = Join-Path $releaseDir $assetName
+          Copy-Item -LiteralPath $generated[0].FullName -Destination $destination -Force
+          "installer=$destination" >> $env:GITHUB_OUTPUT
+          "assetName=$assetName" >> $env:GITHUB_OUTPUT
 
-      - name: Re-sign the final bytes for the Tauri updater
+      - name: Generate the Tauri Updater signature for the final release bytes
         shell: pwsh
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-        run: npm run tauri -- signer sign "${{ steps.locate_signed.outputs.path }}"
+        run: npm run tauri -- signer sign "${{ steps.package.outputs.installer }}"
 
-      - name: Verify Authenticode, Tauri updater signature, and checksums
+      - name: Verify the Tauri signature with the embedded public key
         shell: pwsh
         env:
-          MSH_UPDATER_ARTIFACT: ${{ steps.locate_signed.outputs.path }}
+          MSH_UPDATER_ARTIFACT: ${{ steps.package.outputs.installer }}
         run: |
           $ErrorActionPreference = "Stop"
-          $installer = $env:MSH_UPDATER_ARTIFACT
-          $authenticode = Get-AuthenticodeSignature -LiteralPath $installer
-          if ([string]$authenticode.Status -ne "Valid") {
-            throw "Authenticode verification failed: $($authenticode.Status)"
+          $signaturePath = "$($env:MSH_UPDATER_ARTIFACT).sig"
+          if (-not (Test-Path -LiteralPath $signaturePath -PathType Leaf) -or [string]::IsNullOrWhiteSpace((Get-Content -LiteralPath $signaturePath -Raw -Encoding UTF8))) {
+            throw "The final installer has no non-empty adjacent Tauri updater signature."
           }
           cargo test --locked --manifest-path src-tauri/Cargo.toml --lib app_update::tests::verifies_a_built_updater_with_the_embedded_public_key -- --ignored
-          $hash = (Get-FileHash -LiteralPath $installer -Algorithm SHA256).Hash.ToUpperInvariant()
-          $size = (Get-Item -LiteralPath $installer).Length
-          "$hash  $(Split-Path -Leaf $installer)" | Set-Content -LiteralPath "artifacts/release/SHA256SUMS.txt" -Encoding ascii
-          Write-Output "Verified Authenticode status: $($authenticode.Status)"
-          Write-Output "Verified installer size: $size bytes"
-          Write-Output "Installer SHA-256: $hash"
+          if ($LASTEXITCODE -ne 0) {
+            throw "The embedded updater public key rejected the final release bytes."
+          }
 
-      - name: Create the Tauri updater manifest
+      - name: Create SHA-256SUMS.txt
+        shell: pwsh
+        env:
+          INSTALLER_PATH: ${{ steps.package.outputs.installer }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $hash = (Get-FileHash -LiteralPath $env:INSTALLER_PATH -Algorithm SHA256).Hash.ToUpperInvariant()
+          $assetName = Split-Path -Leaf $env:INSTALLER_PATH
+          "$hash  $assetName" | Set-Content -LiteralPath "artifacts/release/SHA256SUMS.txt" -Encoding ascii
+          Write-Output "Installer SHA-256 created for $assetName."
+
+      - name: Create latest.json
         shell: pwsh
         env:
           RELEASE_VERSION: ${{ inputs.version }}
           RELEASE_TAG: ${{ inputs.release_tag }}
+          INSTALLER_PATH: ${{ steps.package.outputs.installer }}
         run: |
           $ErrorActionPreference = "Stop"
-          $installer = Get-ChildItem -LiteralPath "artifacts/release" -Filter "*.exe" -File | Select-Object -First 1
-          if ($null -eq $installer) {
-            throw "Signed installer was not found."
+          $assetName = Split-Path -Leaf $env:INSTALLER_PATH
+          $downloadUrl = "https://github.com/taori2731/minecraft-server-hub-releases/releases/download/$env:RELEASE_TAG/$([Uri]::EscapeDataString($assetName))"
+          & .\scripts\create-update-manifest.ps1 `
+            -Version $env:RELEASE_VERSION `
+            -DownloadUrl $downloadUrl `
+            -InstallerPath $env:INSTALLER_PATH `
+            -Notes "Minecraft Server Hub $($env:RELEASE_VERSION): UI refresh; ordinary friend invites remain available." `
+            -OutputPath "artifacts/release/latest.json"
+          if ($LASTEXITCODE -ne 0) {
+            throw "latest.json creation failed."
           }
-          $assetName = [Uri]::EscapeDataString($installer.Name)
-          $downloadUrl = "https://github.com/taori2731/minecraft-server-hub-releases/releases/download/$env:RELEASE_TAG/$assetName"
-          & .\scripts\create-update-manifest.ps1 -Version $env:RELEASE_VERSION -DownloadUrl $downloadUrl -InstallerPath $installer.FullName -Notes "Signed Windows release $env:RELEASE_VERSION" -OutputPath "artifacts/release/latest.json"
 
-      - name: Upload the reviewed signed release bundle
+      - name: Verify the complete local release bundle
+        shell: pwsh
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
+          INSTALLER_PATH: ${{ steps.package.outputs.installer }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          New-Item -ItemType Directory -Force -Path "artifacts/verification" | Out-Null
+          & .\scripts\verify-release-artifact.ps1 `
+            -InstallerPath $env:INSTALLER_PATH `
+            -ManifestPath "artifacts/release/latest.json" `
+            -ExpectedVersion $env:RELEASE_VERSION `
+            -ChecksumPath "artifacts/release/SHA256SUMS.txt" `
+            -OutputPath "artifacts/verification/local-release.json"
+          if ($LASTEXITCODE -ne 0) {
+            throw "Local release bundle verification failed."
+          }
+
+      - name: Enforce the public release asset set
+        shell: pwsh
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
+          INSTALLER_PATH: ${{ steps.package.outputs.installer }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $assetName = Split-Path -Leaf $env:INSTALLER_PATH
+          $expected = @($assetName, "$($assetName).sig", "latest.json", "SHA256SUMS.txt")
+          $actual = @(Get-ChildItem -LiteralPath "artifacts/release" -File | Select-Object -ExpandProperty Name)
+          $missing = @($expected | Where-Object { $_ -notin $actual })
+          $unexpected = @($actual | Where-Object { $_ -notin $expected })
+          if ($missing.Count -gt 0 -or $unexpected.Count -gt 0) {
+            throw "Release asset set mismatch. Missing: $($missing -join ', '); unexpected: $($unexpected -join ', ')"
+          }
+
+      - name: Save the pre-public release artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: signed-release-${{ inputs.version }}
+          name: tauri-updater-release-${{ inputs.version }}
           path: artifacts/release
-          archive: true
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Create v0.3.10 as a Draft in the release repository
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_REPO_TOKEN }}
+          RELEASE_VERSION: ${{ inputs.version }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+          INSTALLER_PATH: ${{ steps.package.outputs.installer }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $releaseRepo = $env:RELEASE_REPOSITORY
+          $null = gh release view $env:RELEASE_TAG --repo $releaseRepo 2>$null
+          $releaseViewExit = $LASTEXITCODE
+          if ($releaseViewExit -eq 0) {
+            throw "Refusing to overwrite an existing release: $env:RELEASE_TAG"
+          }
+          $null = gh api "repos/$releaseRepo/git/ref/tags/$env:RELEASE_TAG" 2>$null
+          if ($LASTEXITCODE -eq 0) {
+            throw "Refusing to reuse an existing git tag: $env:RELEASE_TAG"
+          }
+          $releaseAssets = @(
+            $env:INSTALLER_PATH,
+            "$($env:INSTALLER_PATH).sig",
+            (Join-Path $PWD "artifacts/release/latest.json"),
+            (Join-Path $PWD "artifacts/release/SHA256SUMS.txt")
+          )
+          $releaseNotesPath = Join-Path "docs/releases" "$($env:RELEASE_VERSION).md"
+          & gh release create $env:RELEASE_TAG `
+            --repo $releaseRepo `
+            --draft `
+            --latest=false `
+            --title "Minecraft Server Hub $env:RELEASE_VERSION" `
+            --notes-file $releaseNotesPath `
+            $releaseAssets
+          if ($LASTEXITCODE -ne 0) {
+            throw "Draft GitHub Release creation failed."
+          }
+
+      - name: Re-download and verify the three Draft update files
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_REPO_TOKEN }}
+          RELEASE_VERSION: ${{ inputs.version }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+          INSTALLER_PATH: ${{ steps.package.outputs.installer }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $assetName = Split-Path -Leaf $env:INSTALLER_PATH
+          $draftDir = Join-Path $PWD "artifacts/draft-download"
+          New-Item -ItemType Directory -Force -Path $draftDir | Out-Null
+          & gh release download $env:RELEASE_TAG `
+            --repo $env:RELEASE_REPOSITORY `
+            --pattern $assetName `
+            --pattern "$($assetName).sig" `
+            --pattern "latest.json" `
+            --dir $draftDir `
+            --clobber
+          if ($LASTEXITCODE -ne 0) {
+            throw "Draft asset download failed."
+          }
+          $draftInstaller = Join-Path $draftDir $assetName
+          $draftSignature = "$($draftInstaller).sig"
+          $draftManifest = Join-Path $draftDir "latest.json"
+          foreach ($path in @($draftInstaller, $draftSignature, $draftManifest)) {
+            if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
+              throw "Draft asset was not downloaded: $path"
+            }
+          }
+          New-Item -ItemType Directory -Force -Path "artifacts/verification" | Out-Null
+          & .\scripts\verify-release-artifact.ps1 `
+            -InstallerPath $draftInstaller `
+            -ManifestPath $draftManifest `
+            -ExpectedVersion $env:RELEASE_VERSION `
+            -OutputPath "artifacts/verification/draft-release.json"
+          if ($LASTEXITCODE -ne 0) {
+            throw "Draft release verification failed."
+          }
+          $localHash = (Get-FileHash -LiteralPath $env:INSTALLER_PATH -Algorithm SHA256).Hash.ToUpperInvariant()
+          $draftHash = (Get-FileHash -LiteralPath $draftInstaller -Algorithm SHA256).Hash.ToUpperInvariant()
+          if ($localHash -ne $draftHash) {
+            throw "Draft installer SHA-256 differs from the local release bytes."
+          }
+          foreach ($pair in @(
+            @("$($env:INSTALLER_PATH).sig", $draftSignature),
+            @((Join-Path $PWD "artifacts/release/latest.json"), $draftManifest)
+          )) {
+            $left = (Get-FileHash -LiteralPath $pair[0] -Algorithm SHA256).Hash.ToUpperInvariant()
+            $right = (Get-FileHash -LiteralPath $pair[1] -Algorithm SHA256).Hash.ToUpperInvariant()
+            if ($left -ne $right) {
+              throw "A Draft asset differs from the locally verified release bundle: $($pair[1])"
+            }
+          }
+          Write-Output "Draft assets verified without changing the existing v0.3.9 release."
+
+      - name: Publish the verified Draft as Latest
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_REPO_TOKEN }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          & gh release edit $env:RELEASE_TAG --repo $env:RELEASE_REPOSITORY --draft=false --latest
+          if ($LASTEXITCODE -ne 0) {
+            throw "Draft publication failed; the release was not marked Latest."
+          }
+
+      - name: Re-download and verify the public Latest feed and assets
+        shell: pwsh
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+          INSTALLER_PATH: ${{ steps.package.outputs.installer }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $assetName = Split-Path -Leaf $env:INSTALLER_PATH
+          $publicDir = Join-Path $PWD "artifacts/public-download"
+          New-Item -ItemType Directory -Force -Path $publicDir | Out-Null
+          $latestManifestUrl = "https://github.com/$env:RELEASE_REPOSITORY/releases/latest/download/latest.json"
+          $manifestPath = Join-Path $publicDir "latest.json"
+          $latestManifest = $null
+          for ($attempt = 1; $attempt -le 6; $attempt++) {
+            try {
+              Invoke-WebRequest -Uri $latestManifestUrl -OutFile $manifestPath -MaximumRedirection 5
+              $latestManifest = Get-Content -LiteralPath $manifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
+              if ([string]$latestManifest.version -eq $env:RELEASE_VERSION) {
+                break
+              }
+            }
+            catch {
+              if ($attempt -eq 6) { throw }
+            }
+            if ($attempt -lt 6) { Start-Sleep -Seconds 10 }
+          }
+          if ($null -eq $latestManifest -or [string]$latestManifest.version -ne $env:RELEASE_VERSION) {
+            throw "The public Latest feed did not expose $env:RELEASE_VERSION after publication."
+          }
+          $platform = $latestManifest.platforms.'windows-x86_64'
+          $publicUrl = [string]$platform.url
+          $publicUri = $null
+          if (-not [Uri]::TryCreate($publicUrl, [UriKind]::Absolute, [ref]$publicUri) -or
+              $publicUri.Scheme -ne "https" -or
+              [string]::IsNullOrWhiteSpace($publicUri.Host) -or
+              -not [string]::IsNullOrWhiteSpace($publicUri.UserInfo) -or
+              -not [string]::IsNullOrWhiteSpace($publicUri.Query) -or
+              -not [string]::IsNullOrWhiteSpace($publicUri.Fragment)) {
+            throw "The public latest.json URL is not an authentication-free HTTPS URL."
+          }
+          $expectedUrl = "https://github.com/$env:RELEASE_REPOSITORY/releases/download/$env:RELEASE_TAG/$([Uri]::EscapeDataString($assetName))"
+          if ($publicUri.AbsoluteUri -ne $expectedUrl) {
+            throw "The public latest.json URL does not point to the v0.3.10 release asset."
+          }
+          $publicInstaller = Join-Path $publicDir $assetName
+          Invoke-WebRequest -Uri $publicUri.AbsoluteUri -OutFile $publicInstaller -MaximumRedirection 5
+          Invoke-WebRequest -Uri "$($publicUri.AbsoluteUri).sig" -OutFile "$($publicInstaller).sig" -MaximumRedirection 5
+          Invoke-WebRequest -Uri "https://github.com/$env:RELEASE_REPOSITORY/releases/latest/download/SHA256SUMS.txt" -OutFile (Join-Path $publicDir "SHA256SUMS.txt") -MaximumRedirection 5
+          New-Item -ItemType Directory -Force -Path "artifacts/verification" | Out-Null
+          & .\scripts\verify-release-artifact.ps1 `
+            -InstallerPath $publicInstaller `
+            -ManifestPath $manifestPath `
+            -ExpectedVersion $env:RELEASE_VERSION `
+            -ChecksumPath (Join-Path $publicDir "SHA256SUMS.txt") `
+            -OutputPath "artifacts/verification/public-release.json"
+          if ($LASTEXITCODE -ne 0) {
+            throw "Public download verification failed."
+          }
+          $localManifest = Join-Path $PWD "artifacts/release/latest.json"
+          $localSignature = "$($env:INSTALLER_PATH).sig"
+          $publicSignature = "$($publicInstaller).sig"
+          foreach ($pair in @(
+            @($env:INSTALLER_PATH, $publicInstaller),
+            @($localSignature, $publicSignature),
+            @($localManifest, $manifestPath),
+            @((Join-Path $PWD "artifacts/release/SHA256SUMS.txt"), (Join-Path $publicDir "SHA256SUMS.txt"))
+          )) {
+            $left = (Get-FileHash -LiteralPath $pair[0] -Algorithm SHA256).Hash.ToUpperInvariant()
+            $right = (Get-FileHash -LiteralPath $pair[1] -Algorithm SHA256).Hash.ToUpperInvariant()
+            if ($left -ne $right) {
+              throw "A public download differs from the locally verified release bundle: $($pair[1])"
+            }
+          }
+          Write-Output "Public Latest feed, installer, updater signature, and SHA-256 manifest verified."
+
+      - name: Save release verification evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: tauri-updater-release-verification-${{ inputs.version }}
+          path: |
+            artifacts/verification
+            artifacts/public-download/latest.json
+            artifacts/public-download/SHA256SUMS.txt
+          if-no-files-found: error
+          retention-days: 30

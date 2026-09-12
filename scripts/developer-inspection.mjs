@@ -12,6 +12,21 @@ export const CARGO_WINDOWS_X64_TARGET = "x86_64-pc-windows-msvc";
 export const DEVELOPER_ALLOWED_PERMISSIONS = ["core:default", "dialog:allow-open", "dialog:allow-save"];
 export const REQUIRED_BUILD_TOOLS = ["node", "npm", "rustc", "cargo", "rustup"];
 
+export function isSafeUpdateUrl(value) {
+  if (typeof value !== "string" || !value.trim()) return false;
+  try {
+    const url = new URL(value.trim());
+    return url.protocol === "https:"
+      && Boolean(url.hostname)
+      && !url.username
+      && !url.password
+      && !url.search
+      && !url.hash;
+  } catch {
+    return false;
+  }
+}
+
 const DEVELOPER_CAPABILITY_PATH = "developer-tools/src-tauri/capabilities/default.json";
 const DEVELOPER_TAURI_CONFIG_PATH = "developer-tools/src-tauri/tauri.conf.json";
 const DEVELOPER_APP_IDENTIFIER = "local.minecraft-server-hub.developer-tools";
@@ -533,7 +548,8 @@ async function inspectReleaseHistoryEntry(root, updatesRoot, version, publicKey)
   const manifest = await safeJson(manifestPath);
   const platform = manifest?.platforms?.["windows-x86_64"];
   const files = await readdir(directory).catch(() => []);
-  const urlName = typeof platform?.url === "string" ? decodeURIComponent(platform.url.split("/").at(-1) ?? "") : "";
+  const downloadUrl = typeof platform?.url === "string" ? platform.url : "";
+  const urlName = downloadUrl ? decodeURIComponent(downloadUrl.split("/").at(-1) ?? "") : "";
   const installerPath = path.join(directory, files.includes(urlName) ? urlName : files.find((file) => file.toLowerCase().endsWith(".exe")) ?? "");
   const signaturePath = `${installerPath}.sig`;
   const signature = (await safeText(signaturePath))?.trim() ?? "";
@@ -545,6 +561,7 @@ async function inspectReleaseHistoryEntry(root, updatesRoot, version, publicKey)
   } else {
     integrityError = "signature-prerequisite-missing";
   }
+  if (!isSafeUpdateUrl(downloadUrl) && !integrityError) integrityError = "download-url-not-safe";
   return {
     version,
     manifestPath: relative(root, manifestPath),
@@ -903,7 +920,7 @@ export async function inspectDeveloperWorkspace(workspaceRoot, options = {}) {
     statusCheck("signaturePresent", signatureText ? "pass" : "fail", signaturePath ? relative(root, signaturePath) : ""),
     statusCheck("signatureMatchesManifest", signatureText && signatureText === manifestSignature ? "pass" : "fail", signatureText && manifestSignature ? "signature file ↔ latest.json" : ""),
     statusCheck("sha256Calculated", installerSha256 ? "pass" : "fail", installerSha256),
-    statusCheck("downloadUrlHttps", /^https:\/\//i.test(manifestUrl) ? "pass" : "fail", manifestUrl),
+    statusCheck("downloadUrlHttps", isSafeUpdateUrl(manifestUrl) ? "pass" : "fail", manifestUrl),
     statusCheck("remoteFeed", !remoteFeed.checked ? "warning" : remoteFeed.reachable ? "pass" : "warning", remoteFeed.reachable ? `${remoteFeed.version || "—"} · ${endpoint}` : endpoint, remoteFeed.error),
     statusCheck("remoteVersion", !remoteFeed.checked ? "warning" : remoteFeed.reachable && remoteFeed.version === expectedVersion ? "pass" : "warning", `local=${expectedVersion || "—"} · remote=${remoteFeed.version || "—"}`),
     statusCheck("cryptographicSignature", cryptographicSignatureError ? "fail" : "pass", cryptographicSignatureError ? "verification-failed" : "verified", cryptographicSignatureError),

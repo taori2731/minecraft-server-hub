@@ -1,83 +1,113 @@
 # アプリ更新の配布手順
 
-Minecraft Server Hub 0.3.0以降は、Tauri Updaterの署名検証を通過したWindows向けNSIS更新だけをアプリ内から適用します。
+Minecraft Server Hubの通常のアプリ内更新は、0.3.9と同じTauri Updaterの署名方式を使います。Windows NSISインストーラーに隣接する`.sig`を、アプリへ埋め込んだ`src-tauri/updater-public.key`で検証できることが更新の必須条件です。
 
-## 初回準備
+SignPathへの申請とWindows Authenticode署名は、通常のアプリ内更新の必須条件ではありません。このリリース経路ではSignPathへ成果物を送らず、Authenticodeの`Valid`ゲートも設けません。Windowsの発行元表示が必要な場合のAuthenticode署名は、更新のTauri署名ゲートとは別の任意の工程として扱います。
 
-- 署名秘密鍵はリポジトリや配布物へ入れず、安全なオフラインバックアップを作成します。
-- `src-tauri/updater-public.key` と `src-tauri/tauri.conf.json` の公開鍵は、同じ秘密鍵から生成された値を使います。
-- 認証情報やURLフラグメントを含まないHTTPS上に、`latest.json` と更新用NSISファイルを公開します。
-- 公式フィードは `https://github.com/taori2731/minecraft-server-hub-releases/releases/latest/download/latest.json` を標準で使用します。
-- 検証環境などで別フィードを使う場合だけ、ビルド時の `MSH_UPDATE_ENDPOINT` または設定画面に、認証情報を含まないHTTPS URLを指定します。
+## 変更してはいけない信頼境界
 
-## リリース作成
+- `src-tauri/updater-public.key`を変更しません。
+- `src-tauri/tauri.conf.json`の`plugins.updater.pubkey`を変更しません。
+- 0.3.9を署名したものと同じTauri秘密鍵だけを使います。鍵が見つからない、または検証に失敗した場合は新しい鍵を作らず停止します。
+- 秘密鍵、鍵パスワード、GitHubトークンをソース、成果物、マニフェスト、ログへ出しません。
+- 既存の`v0.3.9` Release、タグ、資産は削除・上書きしません。
 
-1. `package.json`、`package-lock.json`、`src-tauri/Cargo.toml`、`src-tauri/tauri.conf.json` のバージョンを同じ値へ更新します。
-2. PowerShellで署名鍵のパスを設定してビルドします。
+公開フィードは次の固定URLです。
 
-   ```powershell
-   $env:TAURI_SIGNING_PRIVATE_KEY = Get-Content -LiteralPath 'C:\安全な保存先\minecraft-server-hub-updater.key' -Raw
-   # 暗号化した鍵を使う本番環境では、パスワードも安全なCIシークレットから設定します。
-   # $env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD = '<鍵のパスワード>'
-   $env:MSH_UPDATE_ENDPOINT = 'https://github.com/taori2731/minecraft-server-hub-releases/releases/latest/download/latest.json'
-   npm run tauri build -- --ci
-   ```
+`https://github.com/taori2731/minecraft-server-hub-releases/releases/latest/download/latest.json`
 
-3. `src-tauri/target/release/bundle/nsis/` に生成された更新用NSISファイルと同名の `.sig` があることを確認します。
-   さらに、生成物と隣接する`.sig`を、アプリへ埋め込んだ公開鍵で実際に検証します。
+`latest.json`内のWindows URLも、認証情報・クエリ・フラグメントを含まないHTTPS URLでなければなりません。
 
-   ```powershell
-   $env:MSH_UPDATER_ARTIFACT = (Resolve-Path -LiteralPath '.\src-tauri\target\release\bundle\nsis\Minecraft Server Hub_0.3.2_x64-setup.exe').Path
-   cargo test --manifest-path .\src-tauri\Cargo.toml --locked app_update::tests::verifies_a_built_updater_with_the_embedded_public_key -- --ignored
-   ```
+## GitHub Actionsの秘密情報
 
-4. 配布先URLを確定し、マニフェストを作成します。
+`Release Windows updater`を実行する前に、ソースリポジトリへ次のActions Secretを登録します。
 
-   ```powershell
-   .\scripts\create-update-manifest.ps1 `
-     -Version '0.3.2' `
-     -DownloadUrl 'https://github.com/taori2731/minecraft-server-hub-releases/releases/download/v0.3.2/Minecraft.Server.Hub_0.3.2_x64-setup.exe' `
-     -InstallerPath '.\src-tauri\target\release\bundle\nsis\Minecraft Server Hub_0.3.2_x64-setup.exe' `
-     -Notes '変更内容' `
-     -OutputPath '.\artifacts\updates\latest.json'
-   ```
+| Secret | 用途 |
+| --- | --- |
+| `TAURI_SIGNING_PRIVATE_KEY` | 0.3.9と同じTauri updater秘密鍵 |
+| `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` | 秘密鍵を暗号化している場合だけ必須 |
+| `RELEASE_REPO_TOKEN` | `taori2731/minecraft-server-hub-releases`へDraft/Releaseを書き込む最小権限トークン |
 
-5. NSISファイル、`.sig`、`latest.json` の3ファイルだけをGitHub Releaseへ公開します。固定URLが新しい公開版を指すよう、`latest.json` も同じReleaseへ置きます。
-6. 旧版の設定画面から手動確認し、バージョンと更新内容、同意画面、ダウンロード、署名検証、再起動後のバージョンを実機確認します。
+`RELEASE_REPO_TOKEN`は署名鍵ではありません。別リポジトリへ公開するための権限だけを持つFine-grained tokenとして作成し、対象を`minecraft-server-hub-releases`に限定します。どのSecretの値もチャットやログへ貼り付けません。
 
-## 署名付きビルドの再現確認
+## 0.3.10の自動リリース
 
-秘密鍵をソース管理へ置かず、鍵ファイルのパスだけを指定して現行ソースを一時ターゲットへビルド・検証できます。スクリプトは鍵の内容を表示せず、既存のターゲットやインストール済みアプリを上書きしません。
+Actionsの`Release Windows updater`を`main`から手動実行し、入力は必ず次にします。
+
+- `version`: `0.3.10`
+- `release_tag`: `v0.3.10`
+
+ワークフローは次の順序で停止点を設けます。
+
+1. `main`、入力値、`package.json`、`package-lock.json`、`src-tauri/Cargo.toml`、`src-tauri/Cargo.lock`、`src-tauri/tauri.conf.json`の版番号を確認します。
+2. `npm run check`、アプリ/Rust/Developer Tools/UI/websiteの回帰テストとビルドを実行します。
+3. Windows x64 NSISをビルドします。
+4. 最終リリース名`Minecraft.Server.Hub_0.3.10_x64-setup.exe`へコピーし、その最終バイト列にTauri Updater`.sig`を生成します。
+5. 埋め込み公開鍵で`.sig`を検証します。
+6. インストーラーのSHA-256を`SHA256SUMS.txt`へ記録し、認証情報のないHTTPS URLを含む`latest.json`を生成します。
+7. 公開前の4資産をActions Artifactへ保存し、ローカル検証結果も保存します。
+8. `v0.3.10`をReleaseリポジトリでDraftとして作成します。既存Releaseまたはタグがあれば、その時点で停止します。
+9. Draftからインストーラー、隣接`.sig`、`latest.json`を再取得し、版番号、URL、署名、埋め込み公開鍵、SHA-256を再検証します。
+10. Draft検証に成功した場合だけDraftを解除し、Latestに指定します。
+11. `releases/latest/download/latest.json`、インストーラー、`.sig`、`SHA256SUMS.txt`を認証なしHTTPSで再取得し、ローカル検証済み資産とSHA-256を比較します。
+
+Draft検証までに失敗した場合、Draftは公開せず、調査用に残ります。公開後のLatest再取得に失敗した場合はActionsを失敗として記録し、再実行前に公開資産を確認します。
+
+Releaseへ置く資産は次の4つです。
+
+- `Minecraft.Server.Hub_0.3.10_x64-setup.exe`
+- `Minecraft.Server.Hub_0.3.10_x64-setup.exe.sig`
+- `latest.json`
+- `SHA256SUMS.txt`
+
+## ローカル署名・検証
+
+秘密鍵はワークスペース外に置き、内容を表示しないまま署名します。
+
+```powershell
+$env:TAURI_SIGNING_PRIVATE_KEY = Get-Content -LiteralPath 'C:\安全な保存先\minecraft-server-hub-updater.key' -Raw
+# 暗号化鍵の場合は、パスワードを安全な環境変数から設定します。
+# $env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD = '<鍵のパスワード>'
+npm run tauri -- build --bundles nsis --ci
+```
+
+既存の署名済みインストーラーを検証する場合は、秘密鍵を要求しません。
+
+```powershell
+npm run build:verify:signed -- `
+  -InstallerPath 'C:\安全な保存先\Minecraft.Server.Hub_0.3.10_x64-setup.exe'
+```
+
+鍵ファイルから一時ターゲットへ署名付きビルドを行うスクリプトも、暗号化鍵のパスワードを現在のプロセス環境から受け取ります。
 
 ```powershell
 npm run build:verify:signed -- `
   -SigningKeyPath 'C:\安全な保存先\minecraft-server-hub-updater.key' `
-  -TargetDir "$env:TEMP\msh-tauri-signed-0.3.8" `
-  -OutputPath '.\artifacts\updates\0.3.8\signed-build-verification.json'
+  -TargetDir "$env:TEMP\msh-tauri-signed-0.3.10" `
+  -OutputPath '.\artifacts\updates\0.3.10\signed-build-verification.json'
 ```
 
-すでに生成したインストーラーを再ビルドせず確認する場合は、`-InstallerPath`だけを指定します。このモードは秘密鍵を要求せず、隣接`.sig`と埋込み公開鍵を検証します。
+Authenticodeを別途確認したい場合だけ`-CheckAuthenticode`を付けます。`-RequireAuthenticode`は任意のWindows発行元確認用であり、通常のアプリ内更新やこのワークフローの公開条件ではありません。
+
+マニフェストと資産をまとめて検証するには次を使います。
 
 ```powershell
-npm run build:verify:signed -- `
-  -InstallerPath "$env:TEMP\msh-tauri-signed-0.3.8\release\bundle\nsis\Minecraft Server Hub_0.3.8_x64-setup.exe"
+.\scripts\verify-release-artifact.ps1 `
+  -InstallerPath '.\artifacts\updates\0.3.10\Minecraft.Server.Hub_0.3.10_x64-setup.exe' `
+  -ManifestPath '.\artifacts\updates\0.3.10\latest.json' `
+  -ExpectedVersion '0.3.10' `
+  -ChecksumPath '.\artifacts\updates\0.3.10\SHA256SUMS.txt'
 ```
 
-この確認で合格するのは、NSIS生成物に隣接するTauri更新署名とアプリへ埋め込んだ公開鍵の一致です。`Get-AuthenticodeSignature` の結果も記録しますが、`NotSigned` はWindows Authenticode署名が無い状態であり、一般配布の信頼済み発行元を意味しません。公開前には別途、Windowsコード署名証明書と安全な署名環境でAuthenticode署名を付け、クリーン環境のインストール・アンインストール・再インストール・更新を確認します。
+## 0.3.9からの互換性
 
-公開ゲートでは`-RequireAuthenticode`を付け、Windows署名状態が`Valid`でない生成物を失敗扱いにします。証明書や署名ツールのない開発環境ではこのオプションを付けずQA証跡だけを作成し、`NotSigned`のまま公開へ進めません。
+0.3.10では公開鍵を変更しないため、0.3.9に埋め込まれた公開鍵で0.3.10の`.sig`を検証できます。0.3.9のReleaseとフィードを先に削除・上書きせず、0.3.10のDraft検証が成功してからLatestを切り替えます。
 
-```powershell
-npm run build:verify:signed -- `
-  -InstallerPath "$env:TEMP\msh-tauri-signed-0.3.8\release\bundle\nsis\Minecraft Server Hub_0.3.8_x64-setup.exe" `
-  -RequireAuthenticode
-```
-
-署名秘密鍵が表示・漏えいした可能性がある場合は、その鍵で公開や本番更新を続けません。新しい鍵を安全な環境で生成し、`src-tauri/updater-public.key`、`tauri.conf.json`、更新マニフェスト、配布経路を同時に切り替えます。公開鍵だけを差し替えると、旧公開鍵を埋め込んだ既存版から新鍵の更新を受けられなくなるため、切替版の配布計画と旧版の扱いを先に決めます。
+実際にインストール済み0.3.9から更新できたことは、ソース、ビルド、署名、公開後ダウンロードとは別の受入証跡です。停止中のMinecraft／Palworldサーバー、設定バックアップ、更新前後のバージョン、通常の友達招待を確認して記録します。
 
 ## 失敗時の扱い
 
-- 確認、ダウンロード、署名検証が失敗した場合はインストーラーを起動せず、現在のアプリを維持します。
-- 署名検証後にだけTauri Updaterへインストールを渡し、アプリ終了を許可します。
-- すべてのMinecraft／Palworldサーバーが停止していない限り、更新を開始しません。
-- 秘密鍵を紛失すると同じ公開鍵を持つ既存アプリへ正規更新を配布できません。公開鍵を差し替えるだけでは既存版を更新できません。
+- 秘密鍵がない、暗号化鍵のパスワードがない、または埋め込み公開鍵が署名を拒否した場合は、新しい鍵を生成せず停止します。
+- 版番号、資産名、URL、隣接`.sig`、`latest.json`内の署名、SHA-256のどれかが一致しない場合は公開しません。
+- Draft検証失敗時はDraftを公開しません。`v0.3.9`を含む既存Releaseには触れません。
+- 更新確認または署名検証に失敗した利用者のアプリは終了・上書きせず、現在のアプリを維持します。

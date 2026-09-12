@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { promisify } from "node:util";
-import { buildAdvisoryPreview, cargoHostApplicability, computeQualitySourceSnapshot, inspectBuildEnvironment, inspectBundleAnalysis, inspectCapabilitySecurity, inspectDeveloperWorkspace, inspectQualityEvidence, npmHostApplicability, QUALITY_REQUIRED_STAGE_IDS } from "./developer-inspection.mjs";
+import { buildAdvisoryPreview, cargoHostApplicability, computeQualitySourceSnapshot, inspectBuildEnvironment, inspectBundleAnalysis, inspectCapabilitySecurity, inspectDeveloperWorkspace, inspectQualityEvidence, isSafeUpdateUrl, npmHostApplicability, QUALITY_REQUIRED_STAGE_IDS } from "./developer-inspection.mjs";
 
 const execFileAsync = promisify(execFile);
 
@@ -64,6 +64,29 @@ async function fixture() {
   }));
   return root;
 }
+
+test("accepts only authentication-free HTTPS release URLs", () => {
+  assert.equal(isSafeUpdateUrl("https://example.com/latest.json"), true);
+  assert.equal(isSafeUpdateUrl("http://example.com/latest.json"), false);
+  assert.equal(isSafeUpdateUrl("https://user:secret@example.com/latest.json"), false);
+  assert.equal(isSafeUpdateUrl("https://example.com/latest.json?token=hidden"), false);
+  assert.equal(isSafeUpdateUrl("https://example.com/latest.json#latest"), false);
+});
+
+test("keeps the 0.3.10 release workflow on the Tauri-only signing path", async () => {
+  const workflow = await readFile(path.join(process.cwd(), ".github", "workflows", "sign-windows-release.yml"), "utf8");
+  assert.doesNotMatch(workflow, /signpath|authenticode/i);
+  assert.match(workflow, /TAURI_SIGNING_PRIVATE_KEY/);
+  assert.match(workflow, /RELEASE_REPO_TOKEN/);
+  assert.match(workflow, /RELEASE_VERSION -ne "0\.3\.10"/);
+  assert.match(workflow, /RELEASE_TAG -ne "v0\.3\.10"/);
+  assert.match(workflow, /--draft/);
+  assert.match(workflow, /--draft=false/);
+  assert.match(workflow, /--latest/);
+  assert.match(workflow, /Minecraft\.Server\.Hub_\$\{env:RELEASE_VERSION\}_x64-setup\.exe/);
+  assert.match(workflow, /verifies_a_built_updater_with_the_embedded_public_key/);
+  assert.match(workflow, /releases\/latest\/download\/latest\.json/);
+});
 
 test("reports a consistent local signed release without mutating the workspace", async () => {
   const root = await fixture();
