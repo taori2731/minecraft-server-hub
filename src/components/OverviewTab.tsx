@@ -3,6 +3,7 @@ import { Icon } from "./Icon";
 import { OperationsPanel } from "./OperationsPanel";
 import { NextStepsCard } from "./NextStepsCard";
 import type { TabId } from "../types";
+import { AccessLogPanel } from "./AccessLogPanel";
 
 interface Props {
   server: ServerProfile;
@@ -75,6 +76,7 @@ export function OverviewTab({ server, status, logs, onCopyAddress, onOpenFolder,
       <NextStepsCard key={server.id} server={server} onNavigate={onNavigate} onInvite={onInvite}/>
       </div>
       <OperationsPanel server={server} status={status} onUpdated={onUpdated} notify={notify} fail={fail} />
+      <AccessLogPanel serverId={server.id} state={status.state}/>
     </div>
   );
 }

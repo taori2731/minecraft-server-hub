@@ -4,7 +4,47 @@ export const MINECRAFT_TABS: readonly TabId[] = [
   "overview", "console", "players", "files", "extensions", "operations", "lab", "safety", "settings",
 ];
 
-export const PALWORLD_TABS: readonly TabId[] = ["overview", "console", "players", "operations", "settings"];
+export const PALWORLD_TABS: readonly TabId[] = ["overview", "console", "players", "files", "operations", "settings"];
+
+export interface GameCapabilities {
+  tabs: readonly TabId[];
+  console: boolean;
+  livePlayers: boolean;
+  playerAccessRules: boolean;
+  fileManager: boolean;
+  extensions: boolean;
+  backups: boolean;
+  updateCenter: boolean;
+  safetyTools: boolean;
+  localRestMonitoring: boolean;
+}
+
+const CAPABILITIES: Record<GameKind, GameCapabilities> = {
+  minecraft: {
+    tabs: MINECRAFT_TABS,
+    console: true,
+    livePlayers: true,
+    playerAccessRules: true,
+    fileManager: true,
+    extensions: true,
+    backups: true,
+    updateCenter: true,
+    safetyTools: true,
+    localRestMonitoring: false,
+  },
+  palworld: {
+    tabs: PALWORLD_TABS,
+    console: true,
+    livePlayers: true,
+    playerAccessRules: false,
+    fileManager: true,
+    extensions: false,
+    backups: true,
+    updateCenter: false,
+    safetyTools: false,
+    localRestMonitoring: true,
+  },
+};
 
 export function gameKindForServer(server: Pick<ServerProfile, "gameKind" | "serverType">): GameKind {
   return server.gameKind === "palworld" || server.serverType === "palworld" ? "palworld" : "minecraft";
@@ -28,7 +68,11 @@ export function getDefaultPortForServerType(serverType: ServerType) {
 }
 
 export function getServerTabs(server: Pick<ServerProfile, "gameKind" | "serverType">): readonly TabId[] {
-  return isPalworldServer(server) ? PALWORLD_TABS : MINECRAFT_TABS;
+  return getGameCapabilities(server).tabs;
+}
+
+export function getGameCapabilities(server: Pick<ServerProfile, "gameKind" | "serverType">): GameCapabilities {
+  return CAPABILITIES[gameKindForServer(server)];
 }
 
 export function getServerVersionLabel(server: Pick<ServerProfile, "gameKind" | "serverType" | "minecraftVersion">) {

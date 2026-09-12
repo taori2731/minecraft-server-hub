@@ -1,8 +1,10 @@
 import { useEffect, useState } from "react";
 import { backend, confirmDanger } from "../lib/backend";
-import type { FixedPlayerPreset, PlayerAccessEntry, PlayerAccessKind, RuntimeStatus, ServerProfile } from "../types";
+import type { FixedPlayerPreset, PlayerAccessEntry, PlayerAccessKind, RuntimeStatus, ServerFileEntry, ServerProfile } from "../types";
 import { Icon } from "./Icon";
 import { PlayerFace } from "./PlayerFace";
+import { useI18n } from "../lib/i18n";
+import { serverManagerText } from "../lib/serverManagerLocale";
 
 const javaAccessTabs: { id: PlayerAccessKind; label: string; detail: string; addLabel: string; removeLabel: string; placeholder: string; dangerousAdd: boolean }[] = [
   { id: "whitelist", label: "ホワイトリスト", detail: "参加を許可するプレイヤー", addLabel: "追加", removeLabel: "外す", placeholder: "Minecraft Java版のプレイヤー名", dangerousAdd: false },
@@ -174,14 +176,61 @@ export function PlayerAccessTab({ server, status, notify, fail }: PlayerAccessPr
   </div>;
 }
 
-export function ServerFilesTab({ server }: { server: ServerProfile }) {
-  const isBedrock = server.serverType === "bedrock";
-  return <div className="tab-content files-content">
-    <section className="feature-panel server-files-panel"><header><div><span className="section-kicker">FILES · {isBedrock ? "BEDROCK" : "JAVA"}</span><h2>サーバーファイル</h2></div></header><div className="folder-summary"><Icon name="folder" size={40} /><strong>{server.settings.worldName}</strong><code>{isBedrock ? `${server.rootPath}\\worlds\\${server.settings.worldName}` : server.rootPath}</code><p>{isBedrock ? "統合版ワールドはworldsフォルダー内にあります。Behavior PackとResource Packは拡張機能タブから安全に管理できます。" : "アプリ内で任意ファイルを書き換えず、必要な設定だけ履歴付きで管理します。詳細確認はWindowsのフォルダーを開きます。"}</p><button className="secondary-button" type="button" onClick={() => backend.openFolder(server.id)}><Icon name="folder" size={17} />サーバーフォルダーを開く</button></div></section>
-  </div>;
+function joinServerPath(directory: string, name: string) { return directory ? `${directory}/${name}` : name; }
+function parentServerPath(path: string) { return path.split("/").slice(0, -1).join("/"); }
+function formatFileSize(size: number) { if (size < 1024) return `${size} B`; if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KiB`; return `${(size / 1024 / 1024).toFixed(1)} MiB`; }
+
+export function ServerFilesTab({ server, status }: { server: ServerProfile; status?: RuntimeStatus }) {
+  const { locale } = useI18n();
+  const fm = (key: Parameters<typeof serverManagerText>[1], values?: Record<string, string>) => serverManagerText(locale, key, values);
+  const [path, setPath] = useState("");
+  const [items, setItems] = useState<ServerFileEntry[]>([]);
+  const [selected, setSelected] = useState<ServerFileEntry>();
+  const [content, setContent] = useState("");
+  const [savedContent, setSavedContent] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const stopped = !status || status.state === "stopped";
+  const dirty = selected?.editable && content !== savedContent;
+
+  const refresh = async (nextPath = path) => {
+    setBusy(true); setError("");
+    try { setItems(await backend.listServerFiles(server.id, nextPath)); setPath(nextPath); setSelected(undefined); setContent(""); setSavedContent(""); }
+    catch (reason) { setError(String(reason)); }
+    finally { setBusy(false); }
+  };
+  useEffect(() => { void refresh(""); }, [server.id]);
+
+  const openItem = async (item: ServerFileEntry) => {
+    if (dirty && !await confirmDanger(fm("discardChanges"))) return;
+    if (item.kind === "directory") { await refresh(item.path); return; }
+    setSelected(item); setError("");
+    if (!item.editable) { setContent(""); setSavedContent(""); return; }
+    setBusy(true);
+    try { const value = await backend.readServerTextFile(server.id, item.path); setContent(value); setSavedContent(value); }
+    catch (reason) { setError(String(reason)); }
+    finally { setBusy(false); }
+  };
+  const mutate = async (action: () => Promise<unknown>) => { setBusy(true); setError(""); try { await action(); await refresh(path); } catch (reason) { setError(String(reason)); setBusy(false); } };
+  const createFile = () => { const name = window.prompt(fm("newFilePrompt")); if (name?.trim()) void mutate(() => backend.writeServerTextFile(server.id, joinServerPath(path, name.trim()), "")); };
+  const createFolder = () => { const name = window.prompt(fm("newFolderPrompt")); if (name?.trim()) void mutate(() => backend.createServerDirectory(server.id, joinServerPath(path, name.trim()))); };
+  const renameItem = () => { if (!selected) return; const name = window.prompt(fm("renamePrompt"), selected.name); if (name?.trim() && name.trim() !== selected.name) void mutate(() => backend.renameServerFile(server.id, selected.path, name.trim())); };
+  const deleteItem = async () => { if (!selected || !await confirmDanger(fm("deleteConfirm", { name: selected.name }))) return; await mutate(() => backend.deleteServerFile(server.id, selected.path)); };
+  const upload = async () => { try { const { open } = await import("@tauri-apps/plugin-dialog"); const source = await open({ multiple: false, title: fm("uploadTitle") }); if (typeof source === "string") await mutate(() => backend.uploadServerFile(server.id, path, source)); } catch (reason) { setError(String(reason)); } };
+  const download = async () => { if (!selected || selected.kind !== "file") return; try { const { save } = await import("@tauri-apps/plugin-dialog"); const destination = await save({ title: fm("downloadTitle"), defaultPath: selected.name }); if (destination) { await backend.downloadServerFile(server.id, selected.path, destination); } } catch (reason) { setError(String(reason)); } };
+  const saveText = async () => { if (!selected?.editable) return; setBusy(true); setError(""); try { await backend.writeServerTextFile(server.id, selected.path, content); setSavedContent(content); } catch (reason) { setError(String(reason)); } finally { setBusy(false); } };
+
+  const crumbs = path ? path.split("/") : [];
+  return <div className="tab-content files-content"><section className="feature-panel file-manager"><header><div><span className="section-kicker">FILES · SANDBOXED</span><h2>{fm("serverFiles")}</h2></div><div className="file-actions"><button className="small-button" onClick={() => backend.openFolder(server.id)}><Icon name="folder" size={16}/>{fm("openWindows")}</button><button className="small-button" disabled={!stopped || busy} onClick={createFile}>{fm("newFile")}</button><button className="small-button" disabled={!stopped || busy} onClick={createFolder}>{fm("newFolder")}</button><button className="small-button" disabled={!stopped || busy} onClick={upload}><Icon name="download" size={16}/>{fm("upload")}</button></div></header>
+    <div className="file-manager-note"><Icon name="check" size={16}/><span>{fm("sandboxNote")}</span></div>
+    <nav className="file-breadcrumb" aria-label="Current folder"><button onClick={() => void refresh("")}>ROOT</button>{crumbs.map((crumb, index) => <button key={`${crumb}-${index}`} onClick={() => void refresh(crumbs.slice(0, index + 1).join("/"))}>/ {crumb}</button>)}</nav>
+    {error ? <p className="inline-error"><Icon name="info" size={16}/>{error}</p> : null}
+    <div className="file-manager-grid"><div className="file-list" aria-busy={busy}>{path ? <button className="file-row parent" onClick={() => void refresh(parentServerPath(path))}><Icon name="folder"/><span><strong>..</strong><small>{fm("parentFolder")}</small></span></button> : null}{items.map((item) => <button key={item.path} className={`file-row${selected?.path === item.path ? " selected" : ""}`} onClick={() => void openItem(item)}><Icon name={item.kind === "directory" ? "folder" : "clipboard"}/><span><strong>{item.name}</strong><small>{item.kind === "directory" ? "Folder" : formatFileSize(item.sizeBytes)}{item.editable ? " · Text" : ""}</small></span><Icon name="chevron" size={16}/></button>)}{!busy && items.length === 0 ? <div className="panel-empty compact"><p>{fm("emptyFolder")}</p></div> : null}</div>
+      <div className="file-preview">{selected ? <><header><div><strong>{selected.name}</strong><small>{selected.path}</small></div><div><button className="small-button" disabled={busy} onClick={download}>{fm("download")}</button><button className="small-button" disabled={!stopped || busy} onClick={renameItem}>{fm("rename")}</button><button className="danger-button" disabled={!stopped || busy} onClick={deleteItem}>{fm("delete")}</button></div></header>{selected.editable ? <><textarea value={content} onChange={(event) => setContent(event.target.value)} spellCheck={false}/><footer><span>{new Blob([content]).size.toLocaleString(locale)} B · {dirty ? fm("unsaved") : fm("saved")}</span><button className="primary-button" disabled={!stopped || busy || !dirty} onClick={saveText}>{fm("save")}</button></footer></> : <div className="panel-empty"><Icon name="info"/><p>{fm("unsupportedEdit")}</p></div>}</> : <div className="panel-empty"><Icon name="folder"/><p>{fm("selectFile")}</p></div>}</div>
+    </div></section></div>;
 }
 
 /** Kept for focused compatibility tests; the app now shows these in separate tabs. */
 export function FilesPlayersTab(props: PlayerAccessProps) {
-  return <><PlayerAccessTab {...props} /><ServerFilesTab server={props.server} /></>;
+  return <><PlayerAccessTab {...props} /><ServerFilesTab server={props.server} status={props.status} /></>;
 }

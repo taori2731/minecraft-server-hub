@@ -92,7 +92,7 @@ export function OperationsPanel({ server, status, onUpdated, notify, fail }: { s
       </> : <div className="panel-empty"><Icon name="memory" size={32} /><p>このPCのCPU・メモリ・Java・保存先をローカルで調べ、余裕を残した推奨値を計算します。</p></div>}
     </section>
 
-    <section className="feature-panel backup-panel">
+    <section className="feature-panel backup-panel" id="server-backups">
       <header><div><span className="section-kicker">SAFETY</span><h2>バックアップ</h2></div><div className="panel-actions"><button className="small-button" type="button" onClick={() => backend.openBackupFolder(server.id)}><Icon name="folder" size={17} />保存先</button><button className="small-button" type="button" onClick={backup} disabled={status.state !== "stopped" || Boolean(busy)}><Icon name="download" size={17} />{busy === "backup" ? "作成中…" : "手動作成"}</button></div></header>
       {status.state !== "stopped" ? <p className="inline-warning"><Icon name="info" size={17} />整合性のため、安全停止してからバックアップします。</p> : null}
       <label className="backup-name"><span>バックアップ名</span><input value={backupName} maxLength={30} placeholder="例: Mod追加前" onChange={(event) => setBackupName(event.target.value.replace(/[^a-zA-Z0-9_-]/g, "-"))}/></label>

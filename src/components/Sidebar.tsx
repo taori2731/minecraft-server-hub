@@ -1,11 +1,12 @@
 import { useState } from "react";
-import type { RuntimeStatus, ServerProfile, TabId } from "../types";
+import type { AppSection, RuntimeStatus, ServerProfile, TabId } from "../types";
 import { Icon } from "./Icon";
 import { useI18n } from "../lib/i18n";
 import { serverTypeLabel } from "../lib/serverEdition";
 import { ServerIcon } from "./ServerIcon";
 import { getNetworkProtocolForServerType, getServerVersionLabel, isPalworldServer } from "../lib/gameAdapter";
 import { homeText } from "../lib/homeLocale";
+import { workspaceText } from "../lib/workspaceLocale";
 
 interface Props {
   servers: ServerProfile[];
@@ -20,21 +21,26 @@ interface Props {
   activeTab: TabId;
   availableTabs: readonly TabId[];
   onNavigate: (tab: TabId) => void;
+  activeSection: AppSection;
+  onSectionNavigate: (section: AppSection) => void;
 }
 
-export function Sidebar({ servers, serverIcons, selectedId, statuses, onSelect, onCreate, onAppSettings, onImport, onDelete, activeTab, availableTabs, onNavigate }: Props) {
+export function Sidebar({ servers, serverIcons, selectedId, statuses, onSelect, onCreate, onAppSettings, onImport, onDelete, activeTab, availableTabs, onNavigate, activeSection, onSectionNavigate }: Props) {
   const { locale, t } = useI18n();
+  const workspace = workspaceText(locale);
   const [query, setQuery] = useState("");
   const filteredServers = servers.filter((server) => `${server.name} ${serverTypeLabel[server.serverType]} ${getServerVersionLabel(server)}`.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase()));
   const runningCount = servers.filter((server) => statuses[server.id]?.state === "running").length;
-  const stateText = { running: t("running"), starting: t("starting"), stopping: t("stopping"), stopped: t("stopped"), crashed: t("crashed") } as const;
+  const stateText = { running: t("running"), starting: t("starting"), stopping: t("stopping"), restarting: t("restarting"), stopped: t("stopped"), crashed: t("crashed"), error: t("crashed"), unknown: "—" } as const;
   return (
     <aside className="sidebar" aria-label={t("serverList")}>
       <nav className="sidebar-navigation" aria-label={homeText(locale).home}>
-        <button type="button" className={activeTab === "overview" ? "active" : ""} disabled={!selectedId} onClick={() => onNavigate("overview")}><Icon name="server" />{homeText(locale).home}</button>
-        {availableTabs.includes("extensions") ? <button type="button" className={activeTab === "extensions" ? "active" : ""} onClick={() => onNavigate("extensions")}><Icon name="plugin" />{homeText(locale).extensions}</button> : null}
-        {availableTabs.includes("players") ? <button type="button" className={activeTab === "players" ? "active" : ""} onClick={() => onNavigate("players")}><Icon name="users" />{t("players")}</button> : null}
-        {availableTabs.includes("operations") ? <button type="button" className={activeTab === "operations" ? "active" : ""} onClick={() => onNavigate("operations")}><Icon name="clock" />{homeText(locale).operations}</button> : null}
+        <button type="button" className={activeSection === "home" ? "active" : ""} disabled={!selectedId} onClick={() => onSectionNavigate("home")}><Icon name="chart" />{homeText(locale).home}</button>
+        <button type="button" className={activeSection === "servers" ? "active" : ""} onClick={() => onSectionNavigate("servers")}><Icon name="server" />{workspace.servers}</button>
+        <button type="button" className={activeSection === "players" ? "active" : ""} disabled={!selectedId || !availableTabs.includes("players")} onClick={() => onSectionNavigate("players")}><Icon name="users" />{workspace.players}</button>
+        <button type="button" className={activeSection === "templates" ? "active" : ""} onClick={() => onSectionNavigate("templates")}><Icon name="clipboard" />{workspace.templates}</button>
+        <button type="button" className={activeSection === "discover" ? "active" : ""} onClick={() => onSectionNavigate("discover")}><Icon name="search" />{workspace.discover}</button>
+        <button type="button" className={activeSection === "news" ? "active" : ""} onClick={() => onSectionNavigate("news")}><Icon name="info" />{workspace.news}</button>
       </nav>
       <div className="sidebar-title"><Icon name="list" /><h2>{t("serverList")}</h2><span className="server-count">{servers.length}</span></div>
       <div className="sidebar-create-actions">

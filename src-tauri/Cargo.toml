@@ -1,6 +1,6 @@
 [package]
 name = "minecraft-server-hub"
-version = "0.3.10"
+version = "0.4.0"
 description = "A safe local Minecraft and Palworld dedicated server manager for Windows"
 authors = ["Minecraft Server Hub contributors"]
 license = "Apache-2.0"

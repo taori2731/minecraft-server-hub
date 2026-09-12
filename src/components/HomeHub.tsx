@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import type { RuntimeStatus, ServerProfile, TabId } from "../types";
 import { useI18n } from "../lib/i18n";
 import { homeText } from "../lib/homeLocale";
@@ -6,6 +6,8 @@ import { getServerTabs, getServerVersionLabel } from "../lib/gameAdapter";
 import { serverTypeLabel } from "../lib/serverEdition";
 import { Icon } from "./Icon";
 import { ServerIcon } from "./ServerIcon";
+import { backend } from "../lib/backend";
+import { serverManagerText } from "../lib/serverManagerLocale";
 
 interface Props {
   servers: ServerProfile[];
@@ -23,8 +25,18 @@ interface Props {
 export function HomeHub({ servers, selected, statuses, serverIcons, onSelect, onCreate, onInvite, onNavigate, onCopyAddress, children }: Props) {
   const { locale, t } = useI18n();
   const text = homeText(locale);
-  const stateLabels = { running: t("running"), starting: t("starting"), stopping: t("stopping"), stopped: t("stopped"), crashed: t("crashed") };
+  const sm = (key: Parameters<typeof serverManagerText>[1]) => serverManagerText(locale, key);
+  const stateLabels = { running: t("running"), starting: t("starting"), stopping: t("stopping"), restarting: t("restarting"), stopped: t("stopped"), crashed: t("crashed"), error: t("crashed"), unknown: "—" };
   const hasExtensions = getServerTabs(selected).includes("extensions");
+  const [latestBackup, setLatestBackup] = useState<string>();
+  useEffect(() => {
+    let active = true;
+    backend.listBackups(selected.id).then((items) => active && setLatestBackup(items[0]?.createdAt)).catch(() => active && setLatestBackup(undefined));
+    return () => { active = false; };
+  }, [selected.id]);
+  const selectedStatus = statuses[selected.id];
+  const uptime = selectedStatus ? selectedStatus.uptimeSeconds < 60 ? `${selectedStatus.uptimeSeconds}s` : selectedStatus.uptimeSeconds < 3600 ? `${Math.floor(selectedStatus.uptimeSeconds / 60)}m` : `${Math.floor(selectedStatus.uptimeSeconds / 3600)}h ${Math.floor(selectedStatus.uptimeSeconds % 3600 / 60)}m` : "—";
+  const jumpTo = (id: string) => { onNavigate("overview"); window.setTimeout(() => document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" }), 0); };
   return <section className="home-hub" aria-label={text.home}>
     <div className="home-main">
       <div className="home-banner"><div><h2>{text.title}</h2><p>{text.subtitle}</p><button className="primary-button" type="button" onClick={onCreate}><Icon name="add" />{t("newServer")}</button></div></div>
@@ -47,11 +59,14 @@ export function HomeHub({ servers, selected, statuses, serverIcons, onSelect, on
     <aside className="home-inspector">
       {children}
       <div className="home-inspector-facts">
-        <div><Icon name="users" size={19} /><span><strong>{statuses[selected.id] ? `${statuses[selected.id].playerCount} / ${statuses[selected.id].maxPlayers}` : "—"}</strong><small>{t("players")}</small></span></div>
-        <button type="button" onClick={onCopyAddress} disabled={!statuses[selected.id]?.address} title={statuses[selected.id]?.address} aria-label={statuses[selected.id]?.address ?? t("loadingServers")}><Icon name="clipboard" size={19} /><span><strong>{statuses[selected.id]?.address ?? "—"}</strong><small>{selected.port} · {selected.serverType === "palworld" || selected.serverType === "bedrock" ? "UDP" : "TCP"}</small></span></button>
+        <div><Icon name="users" size={19} /><span><strong>{selectedStatus ? `${selectedStatus.playerCount} / ${selectedStatus.maxPlayers}` : "—"}</strong><small>{t("players")}</small></span></div>
+        <button type="button" onClick={onCopyAddress} disabled={!selectedStatus?.address} title={selectedStatus?.address} aria-label={selectedStatus?.address ?? t("loadingServers")}><Icon name="clipboard" size={19} /><span><strong>{selectedStatus?.address ?? "—"}</strong><small>{selected.port} · {selected.serverType === "palworld" || selected.serverType === "bedrock" ? "UDP" : "TCP"}</small></span></button>
+        <div><Icon name="clock" size={19}/><span><strong>{uptime}</strong><small>Uptime</small></span></div>
+        <div><Icon name="memory" size={19}/><span><strong>{selectedStatus ? `${(selectedStatus.memoryUsedMib / 1024).toFixed(1)} GiB · CPU ${selectedStatus.cpuPercent.toFixed(0)}%` : "—"}</strong><small>Runtime</small></span></div>
+        <div><Icon name="check" size={19}/><span><strong>{latestBackup ? new Date(latestBackup).toLocaleString(locale) : "—"}</strong><small>Backup</small></span></div>
       </div>
       <button type="button" className="home-invite" onClick={onInvite}><Icon name="invite" size={28} /><span><strong>{text.invite}</strong><small>{text.inviteDetail}</small></span><Icon name="chevron" /></button>
-      <div className="home-inspector-links"><button className="secondary-button" type="button" onClick={() => onNavigate("console")}><Icon name="console" />{t("console")}<Icon name="chevron" size={17} /></button><button className="secondary-button" type="button" onClick={() => onNavigate("settings")}><Icon name="gear" />{t("settings")}</button></div>
+      <div className="home-inspector-links"><button className="secondary-button" type="button" onClick={() => onNavigate("console")}><Icon name="console" />{t("console")}</button>{getServerTabs(selected).includes("files") ? <button className="secondary-button" type="button" onClick={() => onNavigate("files")}><Icon name="folder" />{t("files")}</button> : null}<button className="secondary-button" type="button" onClick={() => jumpTo("server-access-log")}><Icon name="list" />{sm("accessLog")}</button><button className="secondary-button" type="button" onClick={() => jumpTo("server-backups")}><Icon name="download" />{sm("backups")}</button><button className="secondary-button" type="button" onClick={() => onNavigate("settings")}><Icon name="gear" />{t("settings")}</button></div>
     </aside>
   </section>;
 }

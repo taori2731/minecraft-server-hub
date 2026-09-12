@@ -5,6 +5,7 @@ import {
   getNetworkProtocolForServerType,
   getRuntimeKindForServerType,
   getServerTabs,
+  getGameCapabilities,
   isPalworldServer,
   PALWORLD_TABS,
 } from "./gameAdapter";
@@ -19,11 +20,13 @@ describe("game adapter", () => {
     expect(getServerTabs(profile)).toEqual(PALWORLD_TABS);
     expect(getServerTabs(profile)).toContain("operations");
     expect(getServerTabs(profile)).not.toContain("extensions");
+    expect(getGameCapabilities(profile)).toMatchObject({ backups: true, localRestMonitoring: true, fileManager: true });
   });
 
   it("treats legacy profiles without gameKind as Minecraft", () => {
     const profile = { serverType: "paper" } as ServerProfile;
     expect(isPalworldServer(profile)).toBe(false);
     expect(getServerTabs(profile)).toContain("extensions");
+    expect(getGameCapabilities(profile)).toMatchObject({ backups: true, fileManager: true, localRestMonitoring: false });
   });
 });

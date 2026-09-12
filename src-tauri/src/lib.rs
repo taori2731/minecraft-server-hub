@@ -24,6 +24,7 @@ mod process;
 mod profiles;
 mod protected_data;
 mod server_diagnosis;
+mod server_files;
 mod settings;
 mod store;
 mod tunnel;
@@ -337,6 +338,146 @@ fn quit_app(app: tauri::AppHandle, state: State<'_, AppState>) -> AppResult<()> 
 #[tauri::command]
 fn list_servers(state: State<'_, AppState>) -> AppResult<Vec<ServerProfile>> {
     state.store.lock().unwrap().list_servers()
+}
+
+fn require_file_mutation_allowed(
+    server_id: &str,
+    state: &State<'_, AppState>,
+) -> AppResult<ServerProfile> {
+    if process::is_busy(server_id, &state.processes, &state.stopping_servers) {
+        return Err(AppError::Validation(
+            "ファイルを変更する前にサーバーを安全停止してください".into(),
+        ));
+    }
+    state.store.lock().unwrap().get_server(server_id)
+}
+
+#[tauri::command]
+fn list_server_files(
+    server_id: String,
+    path: String,
+    state: State<'_, AppState>,
+) -> AppResult<Vec<server_files::ServerFileEntry>> {
+    let profile = state.store.lock().unwrap().get_server(&server_id)?;
+    server_files::list(&profile, &path)
+}
+
+#[tauri::command]
+fn read_server_text_file(
+    server_id: String,
+    path: String,
+    state: State<'_, AppState>,
+) -> AppResult<String> {
+    let profile = state.store.lock().unwrap().get_server(&server_id)?;
+    server_files::read_text(&profile, &path)
+}
+
+#[tauri::command]
+fn write_server_text_file(
+    server_id: String,
+    path: String,
+    content: String,
+    state: State<'_, AppState>,
+) -> AppResult<()> {
+    let profile = require_file_mutation_allowed(&server_id, &state)?;
+    server_files::write_text(&profile, &path, &content)?;
+    append_audit(
+        &state.audit_dir,
+        &server_id,
+        "local-host",
+        "file.write",
+        &format!("path={path}"),
+    )
+}
+
+#[tauri::command]
+fn create_server_directory(
+    server_id: String,
+    path: String,
+    state: State<'_, AppState>,
+) -> AppResult<()> {
+    let profile = require_file_mutation_allowed(&server_id, &state)?;
+    server_files::create_directory(&profile, &path)?;
+    append_audit(
+        &state.audit_dir,
+        &server_id,
+        "local-host",
+        "file.mkdir",
+        &format!("path={path}"),
+    )
+}
+
+#[tauri::command]
+fn rename_server_file(
+    server_id: String,
+    path: String,
+    new_name: String,
+    state: State<'_, AppState>,
+) -> AppResult<String> {
+    let profile = require_file_mutation_allowed(&server_id, &state)?;
+    let result = server_files::rename(&profile, &path, &new_name)?;
+    append_audit(
+        &state.audit_dir,
+        &server_id,
+        "local-host",
+        "file.rename",
+        &format!("path={path};target={result}"),
+    )?;
+    Ok(result)
+}
+
+#[tauri::command]
+fn delete_server_file(
+    server_id: String,
+    path: String,
+    state: State<'_, AppState>,
+) -> AppResult<()> {
+    let profile = require_file_mutation_allowed(&server_id, &state)?;
+    server_files::delete(&profile, &path)?;
+    append_audit(
+        &state.audit_dir,
+        &server_id,
+        "local-host",
+        "file.delete",
+        &format!("path={path}"),
+    )
+}
+
+#[tauri::command]
+fn upload_server_file(
+    server_id: String,
+    directory: String,
+    source: String,
+    state: State<'_, AppState>,
+) -> AppResult<String> {
+    let profile = require_file_mutation_allowed(&server_id, &state)?;
+    let result = server_files::upload(&profile, &directory, &source)?;
+    append_audit(
+        &state.audit_dir,
+        &server_id,
+        "local-host",
+        "file.upload",
+        &format!("path={result}"),
+    )?;
+    Ok(result)
+}
+
+#[tauri::command]
+fn download_server_file(
+    server_id: String,
+    path: String,
+    destination: String,
+    state: State<'_, AppState>,
+) -> AppResult<()> {
+    let profile = state.store.lock().unwrap().get_server(&server_id)?;
+    server_files::download(&profile, &path, &destination)?;
+    append_audit(
+        &state.audit_dir,
+        &server_id,
+        "local-host",
+        "file.download",
+        &format!("path={path}"),
+    )
 }
 
 #[tauri::command]
@@ -2348,8 +2489,7 @@ fn analyze_server(
 
 #[tauri::command]
 fn list_backups(server_id: String, state: State<'_, AppState>) -> AppResult<Vec<BackupInfo>> {
-    let profile = state.store.lock().unwrap().get_server(&server_id)?;
-    require_minecraft(&profile, "現行バックアップ")?;
+    state.store.lock().unwrap().get_server(&server_id)?;
     backup::list(&state.backups_dir, &server_id)
 }
 
@@ -2367,7 +2507,6 @@ async fn create_backup(
         ));
     }
     let profile = state.store.lock().unwrap().get_server(&server_id)?;
-    require_minecraft(&profile, "現行バックアップ")?;
     let server_name = profile.name.clone();
     let backups_dir = state.backups_dir.clone();
     let audit_dir = state.audit_dir.clone();
@@ -2427,7 +2566,6 @@ fn restore_backup(
         ));
     }
     let profile = state.store.lock().unwrap().get_server(&server_id)?;
-    require_minecraft(&profile, "バックアップ復元")?;
     backup::restore(&state.backups_dir, &profile, &backup_id)?;
     append_audit(
         &state.audit_dir,
@@ -2444,8 +2582,7 @@ fn verify_backup(
     backup_id: String,
     state: State<'_, AppState>,
 ) -> AppResult<bool> {
-    let profile = state.store.lock().unwrap().get_server(&server_id)?;
-    require_minecraft(&profile, "バックアップ検証")?;
+    state.store.lock().unwrap().get_server(&server_id)?;
     backup::verify(&state.backups_dir, &server_id, &backup_id)
 }
 
@@ -2455,8 +2592,7 @@ fn delete_backup(
     backup_id: String,
     state: State<'_, AppState>,
 ) -> AppResult<()> {
-    let profile = state.store.lock().unwrap().get_server(&server_id)?;
-    require_minecraft(&profile, "バックアップ削除")?;
+    state.store.lock().unwrap().get_server(&server_id)?;
     backup::delete(&state.backups_dir, &server_id, &backup_id)?;
     append_audit(
         &state.audit_dir,
@@ -2469,8 +2605,7 @@ fn delete_backup(
 
 #[tauri::command]
 fn open_backup_folder(server_id: String, state: State<'_, AppState>) -> AppResult<()> {
-    let profile = state.store.lock().unwrap().get_server(&server_id)?;
-    require_minecraft(&profile, "現行バックアップ")?;
+    state.store.lock().unwrap().get_server(&server_id)?;
     let folder = state.backups_dir.join(&server_id);
     std::fs::create_dir_all(&folder)?;
     Command::new("explorer.exe").arg(folder).spawn()?;
@@ -4689,6 +4824,14 @@ pub fn run() {
             check_app_update,
             install_app_update,
             list_servers,
+            list_server_files,
+            read_server_text_file,
+            write_server_text_file,
+            create_server_directory,
+            rename_server_file,
+            delete_server_file,
+            upload_server_file,
+            download_server_file,
             get_automation_settings,
             save_automation_settings,
             check_extension_conflicts,

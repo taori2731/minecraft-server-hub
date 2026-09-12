@@ -56,11 +56,13 @@ describe("Minecraft Server Hub", () => {
     expect(await screen.findByRole("button", { name: "ワールドを保存" })).toBeInTheDocument();
 
     const navigation = screen.getByRole("navigation", { name: "サーバー詳細" });
-    expect(within(navigation).getAllByRole("button")).toHaveLength(5);
+    expect(within(navigation).getAllByRole("button")).toHaveLength(6);
+    fireEvent.click(within(navigation).getByRole("button", { name: "ファイル" }));
+    expect(await screen.findByRole("heading", { name: "サーバーファイル" })).toBeInTheDocument();
     fireEvent.click(within(navigation).getByRole("button", { name: "自動運用" }));
     expect(await screen.findByRole("heading", { name: "0人になったら安全に自動停止" })).toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "更新センター" })).not.toBeInTheDocument();
-    expect(within(navigation).queryByRole("button", { name: "ファイル" })).not.toBeInTheDocument();
+    expect(within(navigation).getByRole("button", { name: "ファイル" })).toBeInTheDocument();
     expect(within(navigation).queryByRole("button", { name: "拡張機能" })).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "友達を招待" }));
     expect(await screen.findByRole("heading", { name: "Palworldの友達を招待" })).toBeInTheDocument();
@@ -225,7 +227,7 @@ describe("Minecraft Server Hub", () => {
     const { container } = render(<App />);
     await screen.findByRole("heading", { name: "Survival World" });
     fireEvent.click(container.querySelector<HTMLButtonElement>(".sidebar-footer button")!);
-    fireEvent.click(await screen.findByRole("button", { name: "プラン" }));
+    fireEvent.click(await screen.findByRole("button", { name: "プラン" }, { timeout: 5_000 }));
     expect(await screen.findByRole("heading", { name: "無料版とPro／サポーター版" })).toBeInTheDocument();
     expect(screen.getByText("手動バックアップ・復元と変更前の安全バックアップ")).toBeInTheDocument();
     expect(screen.getByText("予約・複数世代バックアップ（基盤実装済み・予約UI開発中）")).toBeInTheDocument();

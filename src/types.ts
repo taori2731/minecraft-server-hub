@@ -4,11 +4,12 @@ export type ServerEdition = "java" | "bedrock" | "palworld";
 export type ServerRuntimeKind = "java" | "native";
 export type NetworkProtocol = "tcp" | "udp";
 export type WorldType = "minecraft:normal" | "minecraft:flat" | "minecraft:large_biomes" | "minecraft:amplified" | "DEFAULT" | "FLAT" | "LEGACY";
-export type ServerState = "stopped" | "starting" | "running" | "stopping" | "crashed";
+export type ServerState = "stopped" | "starting" | "running" | "stopping" | "restarting" | "crashed" | "error" | "unknown";
 export type ThemeMode = "system" | "dark" | "light";
 export type AccentTheme = "emerald" | "amethyst" | "ocean" | "copper" | "custom";
 export type IconScale = "comfortable" | "compact";
 export type TabId = "overview" | "console" | "players" | "files" | "extensions" | "operations" | "lab" | "safety" | "settings";
+export type AppSection = "home" | "servers" | "players" | "templates" | "discover" | "news";
 
 export interface AppearanceSettings {
   accent: AccentTheme;
@@ -186,6 +187,15 @@ export interface LogEntry {
   timestamp: string;
   level: "INFO" | "WARN" | "ERROR" | string;
   message: string;
+}
+
+export interface ServerFileEntry {
+  name: string;
+  path: string;
+  kind: "file" | "directory";
+  sizeBytes: number;
+  modifiedAt?: number;
+  editable: boolean;
 }
 
 export interface CreateServerInput {

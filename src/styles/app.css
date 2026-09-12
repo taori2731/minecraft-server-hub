@@ -169,11 +169,11 @@ a { color: var(--accent); }
 .status-label { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 14px; }
 .status-label i, .hero-status i, .metric-card small i { width: 11px; height: 11px; border-radius: 50%; background: var(--faint); flex: 0 0 auto; }
 .status-label.running { color: var(--accent); }
-.status-label.starting { color: var(--warning); }
+.status-label.starting, .status-label.stopping, .status-label.restarting { color: var(--warning); }
 .status-label.running i, .hero-status.running i, .metric-card small.online i { background: var(--accent); box-shadow: 0 0 14px color-mix(in srgb, var(--accent) 60%, transparent); }
-.status-label.starting i, .hero-status.starting i { background: var(--warning); box-shadow: 0 0 14px color-mix(in srgb, var(--warning) 60%, transparent); }
-.status-label.crashed, .hero-status.crashed { color: var(--danger); }
-.status-label.crashed i, .hero-status.crashed i { background: var(--danger); }
+.status-label.starting i, .status-label.stopping i, .status-label.restarting i, .hero-status.starting i, .hero-status.stopping i, .hero-status.restarting i { background: var(--warning); box-shadow: 0 0 14px color-mix(in srgb, var(--warning) 60%, transparent); }
+.status-label.crashed, .status-label.error, .hero-status.crashed, .hero-status.error { color: var(--danger); }
+.status-label.crashed i, .status-label.error i, .hero-status.crashed i, .hero-status.error i { background: var(--danger); }
 .sidebar-footer { height: 72px; padding: 0 22px; display: flex; gap: 8px; align-items: center; border-top: 1px solid var(--border); }
 .sidebar-footer button { border: 0; background: transparent; color: var(--muted); min-height: 44px; padding: 0 12px; display: flex; align-items: center; gap: 10px; }
 .sidebar-empty { min-height: 280px; display: flex; flex-direction: column; gap: 10px; align-items: center; justify-content: center; text-align: center; color: var(--muted); }
@@ -187,7 +187,7 @@ a { color: var(--accent); }
 .server-heading p { max-width: 100%; overflow-wrap: anywhere; color: var(--muted); font-size: 20px; margin: 0 0 16px; }
 .hero-status { width: fit-content; display: flex; align-items: center; gap: 10px; border-radius: 999px; padding: 9px 15px; color: var(--muted); background: var(--surface); font-weight: 700; }
 .hero-status.running { background: var(--accent-soft); color: var(--accent); }
-.hero-status.starting { background: color-mix(in srgb, var(--warning) 12%, var(--surface)); color: var(--warning); border: 1px solid color-mix(in srgb, var(--warning) 35%, var(--border)); }
+.hero-status.starting, .hero-status.stopping, .hero-status.restarting { background: color-mix(in srgb, var(--warning) 12%, var(--surface)); color: var(--warning); border: 1px solid color-mix(in srgb, var(--warning) 35%, var(--border)); }
 .hero-status i { width: 12px; height: 12px; border-radius: 50%; background: var(--faint); }
 .server-actions { position: relative; z-index: 1; display: flex; gap: 14px; padding-left: 24px; }
 .action-button { min-width: 140px; min-height: 62px; font-size: 18px; border-radius: 11px; }

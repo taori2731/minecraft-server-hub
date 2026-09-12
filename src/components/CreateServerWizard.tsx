@@ -14,6 +14,7 @@ interface Props {
   onClose: () => void;
   onCreated: (server: ServerProfile) => void;
   isFirstServer: boolean;
+  initialTemplateId?: string;
 }
 
 const initialInput: CreateServerInput = {
@@ -85,18 +86,19 @@ function formatElapsed(seconds: number) {
   return `${minutes}:${remainder}`;
 }
 
-export function CreateServerWizard({ onClose, onCreated, isFirstServer }: Props) {
+export function CreateServerWizard({ onClose, onCreated, isFirstServer, initialTemplateId }: Props) {
   const { locale } = useI18n();
   const pw = (key: Parameters<typeof palworldText>[1], values: Parameters<typeof palworldText>[2] = {}) => palworldText(locale, key, values);
   const [step, setStep] = useState(0);
-  const [input, setInput] = useState<CreateServerInput>(initialInput);
+  const initialTemplate = serverTemplates.find((template) => template.id === initialTemplateId);
+  const [input, setInput] = useState<CreateServerInput>(() => initialTemplate ? applyServerTemplate(initialInput, initialTemplate) : initialInput);
   const [versions, setVersions] = useState<VersionOption[]>([]);
   const [javaRuntimes, setJavaRuntimes] = useState<JavaRuntime[]>([]);
   const [loading, setLoading] = useState(false);
   const [installProgress, setInstallProgress] = useState<PalworldInstallProgress>();
   const [installElapsedSeconds, setInstallElapsedSeconds] = useState(0);
   const [error, setError] = useState("");
-  const [selectedTemplate, setSelectedTemplate] = useState("");
+  const [selectedTemplate, setSelectedTemplate] = useState(initialTemplate?.id ?? "");
   const [pcDiagnosis, setPcDiagnosis] = useState<PcDiagnosis>();
   const [recommendationApplied, setRecommendationApplied] = useState(false);
   const [portHint, setPortHint] = useState("空きポートを確認中…");
