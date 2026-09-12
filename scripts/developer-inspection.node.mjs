@@ -73,13 +73,13 @@ test("accepts only authentication-free HTTPS release URLs", () => {
   assert.equal(isSafeUpdateUrl("https://example.com/latest.json#latest"), false);
 });
 
-test("keeps the 0.3.10 release workflow on the Tauri-only signing path", async () => {
+test("keeps the 0.4.1 release workflow on the Tauri-only signing path", async () => {
   const workflow = await readFile(path.join(process.cwd(), ".github", "workflows", "sign-windows-release.yml"), "utf8");
   assert.doesNotMatch(workflow, /signpath|authenticode/i);
   assert.match(workflow, /TAURI_SIGNING_PRIVATE_KEY/);
   assert.match(workflow, /RELEASE_REPO_TOKEN/);
-  assert.match(workflow, /RELEASE_VERSION -ne "0\.3\.10"/);
-  assert.match(workflow, /RELEASE_TAG -ne "v0\.3\.10"/);
+  assert.match(workflow, /RELEASE_VERSION -ne "0\.4\.1"/);
+  assert.match(workflow, /RELEASE_TAG -ne "v0\.4\.1"/);
   assert.match(workflow, /--draft/);
   assert.match(workflow, /--draft=false/);
   assert.match(workflow, /--latest/);

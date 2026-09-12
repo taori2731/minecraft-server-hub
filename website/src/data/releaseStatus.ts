@@ -1,7 +1,7 @@
 export type DeliveryStatus = "implemented" | "conditional" | "developing";
 
 export const releaseStatus = {
-  version: "開発版 0.3.10",
+  version: "開発版 0.4.1",
   updatedAt: "2026-09-12",
   download: "一般公開準備中",
   groups: [

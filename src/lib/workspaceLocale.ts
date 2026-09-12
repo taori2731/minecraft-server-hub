@@ -47,15 +47,15 @@ const announcementText: Record<AppLocale, readonly string[]> = {
 
 export function workspaceAnnouncements(locale: AppLocale) {
   const titles: Record<AppLocale, readonly string[]> = {
-    ja: ["Minecraft Server Hub 0.3.10", "Palworld専用サーバー対応", "より安全な削除とバックアップ"],
-    en: ["Minecraft Server Hub 0.3.10", "Palworld dedicated server support", "Safer deletion and backups"],
-    "zh-CN": ["Minecraft Server Hub 0.3.10", "支持 Palworld 专用服务器", "更安全的删除与备份"],
-    "zh-TW": ["Minecraft Server Hub 0.3.10", "支援 Palworld 專用伺服器", "更安全的刪除與備份"],
-    ko: ["Minecraft Server Hub 0.3.10", "Palworld 전용 서버 지원", "더 안전한 삭제와 백업"],
-    es: ["Minecraft Server Hub 0.3.10", "Compatibilidad con servidor de Palworld", "Eliminación y copias más seguras"],
-    de: ["Minecraft Server Hub 0.3.10", "Palworld-Dedicated-Server", "Sicheres Löschen und Sichern"],
-    fr: ["Minecraft Server Hub 0.3.10", "Prise en charge du serveur Palworld", "Suppression et sauvegardes plus sûres"],
-    "pt-BR": ["Minecraft Server Hub 0.3.10", "Suporte a servidor dedicado Palworld", "Exclusão e backups mais seguros"],
+    ja: ["Minecraft Server Hub 0.4.1", "Palworld専用サーバー対応", "より安全な削除とバックアップ"],
+    en: ["Minecraft Server Hub 0.4.1", "Palworld dedicated server support", "Safer deletion and backups"],
+    "zh-CN": ["Minecraft Server Hub 0.4.1", "支持 Palworld 专用服务器", "更安全的删除与备份"],
+    "zh-TW": ["Minecraft Server Hub 0.4.1", "支援 Palworld 專用伺服器", "更安全的刪除與備份"],
+    ko: ["Minecraft Server Hub 0.4.1", "Palworld 전용 서버 지원", "더 안전한 삭제와 백업"],
+    es: ["Minecraft Server Hub 0.4.1", "Compatibilidad con servidor de Palworld", "Eliminación y copias más seguras"],
+    de: ["Minecraft Server Hub 0.4.1", "Palworld-Dedicated-Server", "Sicheres Löschen und Sichern"],
+    fr: ["Minecraft Server Hub 0.4.1", "Prise en charge du serveur Palworld", "Suppression et sauvegardes plus sûres"],
+    "pt-BR": ["Minecraft Server Hub 0.4.1", "Suporte a servidor dedicado Palworld", "Exclusão e backups mais seguros"],
   };
   return announcementText[locale].map((body, index) => ({ date: ["2026-09-12", "2026-09-11", "2026-09-10"][index], tag: ["APP", "PALWORLD", "SAFETY"][index], title: titles[locale][index], body }));
 }

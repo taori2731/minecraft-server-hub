@@ -41,8 +41,28 @@ describe("Minecraft Server Hub", () => {
     fireEvent.click(within(container.querySelector(".home-server-grid")!).getByRole("button", { name: /Palworld Friends/ }));
     expect(await screen.findByRole("heading", { name: "Palworld Friends" })).toBeInTheDocument();
     expect(container.querySelector(".sidebar-navigation")).not.toHaveTextContent("プラグイン・Mod");
-    fireEvent.click(within(container.querySelector(".home-inspector-links")!).getByRole("button", { name: "コンソール" }));
-    expect(await screen.findByText(/ログは読み取り専用/)).toBeInTheDocument();
+    fireEvent.click(within(container.querySelector(".home-inspector-links")!).getByRole("button", { name: "ファイル管理" }));
+    expect(await screen.findByRole("heading", { name: "サーバーファイル" })).toBeInTheDocument();
+  });
+
+  it("keeps the home dashboard focused on the reference actions", async () => {
+    const { container } = render(<App />);
+    await screen.findByRole("heading", { name: "Survival World" });
+
+    expect(screen.queryByText("遊び方を広げる")).not.toBeInTheDocument();
+    expect(container.querySelector(".home-invite")).not.toBeInTheDocument();
+
+    const shortcuts = within(container.querySelector(".home-inspector-links")!);
+    expect(shortcuts.getAllByRole("button")).toHaveLength(3);
+    expect(shortcuts.getByRole("button", { name: "アクセスログ" })).toBeInTheDocument();
+    expect(shortcuts.getByRole("button", { name: "バックアップ" })).toBeInTheDocument();
+    expect(shortcuts.getByRole("button", { name: "ファイル管理" })).toBeInTheDocument();
+    expect(shortcuts.queryByRole("button", { name: "コンソール" })).not.toBeInTheDocument();
+    expect(shortcuts.queryByRole("button", { name: "設定" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "友達を招待" })).toBeInTheDocument();
+    const main = container.querySelector(".home-main")!;
+    expect(main.querySelector(".home-overview-below .tabs")).toBeInTheDocument();
+    expect(main.querySelector(".home-overview-below .overview-content")).toBeInTheDocument();
   });
 
   it("switches to the Palworld adapter with its dedicated invite and without Minecraft-only tabs or command input", async () => {
@@ -59,21 +79,22 @@ describe("Minecraft Server Hub", () => {
     expect(within(navigation).getAllByRole("button")).toHaveLength(6);
     fireEvent.click(within(navigation).getByRole("button", { name: "ファイル" }));
     expect(await screen.findByRole("heading", { name: "サーバーファイル" })).toBeInTheDocument();
-    fireEvent.click(within(navigation).getByRole("button", { name: "自動運用" }));
+    const palworldNavigation = screen.getByRole("navigation", { name: "サーバー詳細" });
+    fireEvent.click(within(palworldNavigation).getByRole("button", { name: "自動運用" }));
     expect(await screen.findByRole("heading", { name: "0人になったら安全に自動停止" })).toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "更新センター" })).not.toBeInTheDocument();
-    expect(within(navigation).getByRole("button", { name: "ファイル" })).toBeInTheDocument();
-    expect(within(navigation).queryByRole("button", { name: "拡張機能" })).not.toBeInTheDocument();
+    expect(within(palworldNavigation).getByRole("button", { name: "ファイル" })).toBeInTheDocument();
+    expect(within(palworldNavigation).queryByRole("button", { name: "拡張機能" })).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "友達を招待" }));
     expect(await screen.findByRole("heading", { name: "Palworldの友達を招待" })).toBeInTheDocument();
     expect(screen.getByText("別の家の友達に渡すアドレス")).toBeInTheDocument();
     fireEvent.click(screen.getAllByRole("button", { name: "閉じる" })[0]);
 
-    fireEvent.click(within(navigation).getByRole("button", { name: "コンソール" }));
+    fireEvent.click(within(palworldNavigation).getByRole("button", { name: "コンソール" }));
     expect(screen.queryByLabelText("サーバーコマンド")).not.toBeInTheDocument();
     expect(await screen.findByText(/ログは読み取り専用/)).toBeInTheDocument();
 
-    fireEvent.click(within(navigation).getByRole("button", { name: "概要" }));
+    fireEvent.click(within(palworldNavigation).getByRole("button", { name: "概要" }));
     fireEvent.click(screen.getByRole("button", { name: "起動" }));
     expect(await screen.findByText("サーバーを起動しました")).toBeInTheDocument();
     const save = await screen.findByRole("button", { name: "ワールドを保存" });

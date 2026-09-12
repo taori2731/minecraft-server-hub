@@ -16,18 +16,19 @@ interface Props {
   serverIcons: Record<string, string>;
   onSelect: (id: string) => void;
   onCreate: () => void;
-  onInvite: () => void;
   onNavigate: (tab: TabId) => void;
   onCopyAddress: () => void;
   children: ReactNode;
+  below?: ReactNode;
 }
 
-export function HomeHub({ servers, selected, statuses, serverIcons, onSelect, onCreate, onInvite, onNavigate, onCopyAddress, children }: Props) {
+export function HomeHub({ servers, selected, statuses, serverIcons, onSelect, onCreate, onNavigate, onCopyAddress, children, below }: Props) {
   const { locale, t } = useI18n();
   const text = homeText(locale);
   const sm = (key: Parameters<typeof serverManagerText>[1]) => serverManagerText(locale, key);
+  const fileManagementLabel = locale === "ja" ? "ファイル管理" : sm("serverFiles");
   const stateLabels = { running: t("running"), starting: t("starting"), stopping: t("stopping"), restarting: t("restarting"), stopped: t("stopped"), crashed: t("crashed"), error: t("crashed"), unknown: "—" };
-  const hasExtensions = getServerTabs(selected).includes("extensions");
+  const serverTabs = getServerTabs(selected);
   const [latestBackup, setLatestBackup] = useState<string>();
   useEffect(() => {
     let active = true;
@@ -50,11 +51,7 @@ export function HomeHub({ servers, selected, statuses, serverIcons, onSelect, on
           </button>;
         })}<button type="button" className="home-server-add" onClick={onCreate}><Icon name="add" size={30} /><strong>{t("newServer")}</strong></button></div>
       </section>
-      <section className="home-discover"><header><h2>{text.discover}</h2></header><div className="home-discover-grid">
-        <button type="button" className="discovery-card create" onClick={onCreate}><Icon name="server" size={28} /><strong>{text.create}</strong><span>{text.createDetail}</span><Icon name="chevron" size={18} /></button>
-        {hasExtensions ? <button type="button" className="discovery-card extensions" onClick={() => onNavigate("extensions")}><Icon name="plugin" size={28} /><strong>{text.extensions}</strong><span>{text.extensionsDetail}</span><Icon name="chevron" size={18} /></button> : null}
-        <button type="button" className="discovery-card operations" onClick={() => onNavigate("operations")}><Icon name="clock" size={28} /><strong>{text.operations}</strong><span>{text.operationsDetail}</span><Icon name="chevron" size={18} /></button>
-      </div></section>
+      {below}
     </div>
     <aside className="home-inspector">
       {children}
@@ -65,8 +62,7 @@ export function HomeHub({ servers, selected, statuses, serverIcons, onSelect, on
         <div><Icon name="memory" size={19}/><span><strong>{selectedStatus ? `${(selectedStatus.memoryUsedMib / 1024).toFixed(1)} GiB · CPU ${selectedStatus.cpuPercent.toFixed(0)}%` : "—"}</strong><small>Runtime</small></span></div>
         <div><Icon name="check" size={19}/><span><strong>{latestBackup ? new Date(latestBackup).toLocaleString(locale) : "—"}</strong><small>Backup</small></span></div>
       </div>
-      <button type="button" className="home-invite" onClick={onInvite}><Icon name="invite" size={28} /><span><strong>{text.invite}</strong><small>{text.inviteDetail}</small></span><Icon name="chevron" /></button>
-      <div className="home-inspector-links"><button className="secondary-button" type="button" onClick={() => onNavigate("console")}><Icon name="console" />{t("console")}</button>{getServerTabs(selected).includes("files") ? <button className="secondary-button" type="button" onClick={() => onNavigate("files")}><Icon name="folder" />{t("files")}</button> : null}<button className="secondary-button" type="button" onClick={() => jumpTo("server-access-log")}><Icon name="list" />{sm("accessLog")}</button><button className="secondary-button" type="button" onClick={() => jumpTo("server-backups")}><Icon name="download" />{sm("backups")}</button><button className="secondary-button" type="button" onClick={() => onNavigate("settings")}><Icon name="gear" />{t("settings")}</button></div>
+      <div className="home-inspector-links"><button className="secondary-button" type="button" onClick={() => jumpTo("server-access-log")}><Icon name="list" />{sm("accessLog")}</button><button className="secondary-button" type="button" onClick={() => jumpTo("server-backups")}><Icon name="download" />{sm("backups")}</button>{serverTabs.includes("files") ? <button className="secondary-button" type="button" onClick={() => onNavigate("files")}><Icon name="folder" />{fileManagementLabel}</button> : null}</div>
     </aside>
   </section>;
 }

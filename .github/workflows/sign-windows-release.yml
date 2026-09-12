@@ -4,11 +4,11 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Must be 0.3.10 and match every package manifest"
+        description: "Must be 0.4.1 and match every package manifest"
         required: true
         type: string
       release_tag:
-        description: "Must be v0.3.10 in minecraft-server-hub-releases"
+        description: "Must be v0.4.1 in minecraft-server-hub-releases"
         required: true
         type: string
 
@@ -46,11 +46,11 @@ jobs:
           if ($env:GITHUB_REF -ne "refs/heads/main") {
             throw "The updater release workflow may run only from main."
           }
-          if ($env:RELEASE_VERSION -ne "0.3.10") {
-            throw "This guarded workflow is for version 0.3.10 only."
+          if ($env:RELEASE_VERSION -ne "0.4.1") {
+            throw "This guarded workflow is for version 0.4.1 only."
           }
-          if ($env:RELEASE_TAG -ne "v0.3.10") {
-            throw "This guarded workflow is for release tag v0.3.10 only."
+          if ($env:RELEASE_TAG -ne "v0.4.1") {
+            throw "This guarded workflow is for release tag v0.4.1 only."
           }
 
           $package = Get-Content -LiteralPath "package.json" -Raw -Encoding UTF8 | ConvertFrom-Json
@@ -80,7 +80,7 @@ jobs:
           }
           $changedKey = @(git diff --name-only HEAD^ HEAD -- src-tauri/updater-public.key)
           if ($changedKey.Count -gt 0) {
-            throw "The 0.3.10 release commit must not change src-tauri/updater-public.key."
+            throw "The 0.4.1 release commit must not change src-tauri/updater-public.key."
           }
 
           if ([string]::IsNullOrWhiteSpace($env:TAURI_SIGNING_PRIVATE_KEY)) {
@@ -297,7 +297,7 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
-      - name: Create v0.3.10 as a Draft in the release repository
+      - name: Create v0.4.1 as a Draft in the release repository
         shell: pwsh
         env:
           GH_TOKEN: ${{ secrets.RELEASE_REPO_TOKEN }}
@@ -445,7 +445,7 @@ jobs:
           }
           $expectedUrl = "https://github.com/$env:RELEASE_REPOSITORY/releases/download/$env:RELEASE_TAG/$([Uri]::EscapeDataString($assetName))"
           if ($publicUri.AbsoluteUri -ne $expectedUrl) {
-            throw "The public latest.json URL does not point to the v0.3.10 release asset."
+            throw "The public latest.json URL does not point to the v0.4.1 release asset."
           }
           $publicInstaller = Join-Path $publicDir $assetName
           Invoke-WebRequest -Uri $publicUri.AbsoluteUri -OutFile $publicInstaller -MaximumRedirection 5

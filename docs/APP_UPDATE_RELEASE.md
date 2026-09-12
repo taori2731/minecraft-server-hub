@@ -30,23 +30,23 @@ SignPathへの申請とWindows Authenticode署名は、通常のアプリ内更�
 
 `RELEASE_REPO_TOKEN`は署名鍵ではありません。別リポジトリへ公開するための権限だけを持つFine-grained tokenとして作成し、対象を`minecraft-server-hub-releases`に限定します。どのSecretの値もチャットやログへ貼り付けません。
 
-## 0.3.10の自動リリース
+## 0.4.1の自動リリース
 
 Actionsの`Release Windows updater`を`main`から手動実行し、入力は必ず次にします。
 
-- `version`: `0.3.10`
-- `release_tag`: `v0.3.10`
+- `version`: `0.4.1`
+- `release_tag`: `v0.4.1`
 
 ワークフローは次の順序で停止点を設けます。
 
 1. `main`、入力値、`package.json`、`package-lock.json`、`src-tauri/Cargo.toml`、`src-tauri/Cargo.lock`、`src-tauri/tauri.conf.json`の版番号を確認します。
 2. `npm run check`、アプリ/Rust/Developer Tools/UI/websiteの回帰テストとビルドを実行します。
 3. Windows x64 NSISをビルドします。
-4. 最終リリース名`Minecraft.Server.Hub_0.3.10_x64-setup.exe`へコピーし、その最終バイト列にTauri Updater`.sig`を生成します。
+4. 最終リリース名`Minecraft.Server.Hub_0.4.1_x64-setup.exe`へコピーし、その最終バイト列にTauri Updater`.sig`を生成します。
 5. 埋め込み公開鍵で`.sig`を検証します。
 6. インストーラーのSHA-256を`SHA256SUMS.txt`へ記録し、認証情報のないHTTPS URLを含む`latest.json`を生成します。
 7. 公開前の4資産をActions Artifactへ保存し、ローカル検証結果も保存します。
-8. `v0.3.10`をReleaseリポジトリでDraftとして作成します。既存Releaseまたはタグがあれば、その時点で停止します。
+8. `v0.4.1`をReleaseリポジトリでDraftとして作成します。既存Releaseまたはタグがあれば、その時点で停止します。
 9. Draftからインストーラー、隣接`.sig`、`latest.json`を再取得し、版番号、URL、署名、埋め込み公開鍵、SHA-256を再検証します。
 10. Draft検証に成功した場合だけDraftを解除し、Latestに指定します。
 11. `releases/latest/download/latest.json`、インストーラー、`.sig`、`SHA256SUMS.txt`を認証なしHTTPSで再取得し、ローカル検証済み資産とSHA-256を比較します。
@@ -55,8 +55,8 @@ Draft検証までに失敗した場合、Draftは公開せず、調査用に残�
 
 Releaseへ置く資産は次の4つです。
 
-- `Minecraft.Server.Hub_0.3.10_x64-setup.exe`
-- `Minecraft.Server.Hub_0.3.10_x64-setup.exe.sig`
+- `Minecraft.Server.Hub_0.4.1_x64-setup.exe`
+- `Minecraft.Server.Hub_0.4.1_x64-setup.exe.sig`
 - `latest.json`
 - `SHA256SUMS.txt`
 
@@ -75,7 +75,7 @@ npm run tauri -- build --bundles nsis --ci
 
 ```powershell
 npm run build:verify:signed -- `
-  -InstallerPath 'C:\安全な保存先\Minecraft.Server.Hub_0.3.10_x64-setup.exe'
+  -InstallerPath 'C:\安全な保存先\Minecraft.Server.Hub_0.4.1_x64-setup.exe'
 ```
 
 鍵ファイルから一時ターゲットへ署名付きビルドを行うスクリプトも、暗号化鍵のパスワードを現在のプロセス環境から受け取ります。
@@ -83,8 +83,8 @@ npm run build:verify:signed -- `
 ```powershell
 npm run build:verify:signed -- `
   -SigningKeyPath 'C:\安全な保存先\minecraft-server-hub-updater.key' `
-  -TargetDir "$env:TEMP\msh-tauri-signed-0.3.10" `
-  -OutputPath '.\artifacts\updates\0.3.10\signed-build-verification.json'
+  -TargetDir "$env:TEMP\msh-tauri-signed-0.4.1" `
+  -OutputPath '.\artifacts\updates\0.4.1\signed-build-verification.json'
 ```
 
 Authenticodeを別途確認したい場合だけ`-CheckAuthenticode`を付けます。`-RequireAuthenticode`は任意のWindows発行元確認用であり、通常のアプリ内更新やこのワークフローの公開条件ではありません。
@@ -93,15 +93,15 @@ Authenticodeを別途確認したい場合だけ`-CheckAuthenticode`を付けま
 
 ```powershell
 .\scripts\verify-release-artifact.ps1 `
-  -InstallerPath '.\artifacts\updates\0.3.10\Minecraft.Server.Hub_0.3.10_x64-setup.exe' `
-  -ManifestPath '.\artifacts\updates\0.3.10\latest.json' `
-  -ExpectedVersion '0.3.10' `
-  -ChecksumPath '.\artifacts\updates\0.3.10\SHA256SUMS.txt'
+  -InstallerPath '.\artifacts\updates\0.4.1\Minecraft.Server.Hub_0.4.1_x64-setup.exe' `
+  -ManifestPath '.\artifacts\updates\0.4.1\latest.json' `
+  -ExpectedVersion '0.4.1' `
+  -ChecksumPath '.\artifacts\updates\0.4.1\SHA256SUMS.txt'
 ```
 
 ## 0.3.9からの互換性
 
-0.3.10では公開鍵を変更しないため、0.3.9に埋め込まれた公開鍵で0.3.10の`.sig`を検証できます。0.3.9のReleaseとフィードを先に削除・上書きせず、0.3.10のDraft検証が成功してからLatestを切り替えます。
+0.4.1では公開鍵を変更しないため、0.3.9および0.4.0に埋め込まれた公開鍵で0.4.1の`.sig`を検証できます。0.3.9および0.4.0のReleaseとフィードを先に削除・上書きせず、0.4.1のDraft検証が成功してからLatestを切り替えます。
 
 実際にインストール済み0.3.9から更新できたことは、ソース、ビルド、署名、公開後ダウンロードとは別の受入証跡です。停止中のMinecraft／Palworldサーバー、設定バックアップ、更新前後のバージョン、通常の友達招待を確認して記録します。
 

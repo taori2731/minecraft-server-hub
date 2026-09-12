@@ -353,6 +353,12 @@ export function AppContent() {
     setShowWizard(true);
   }, []);
 
+  const serverNavigation = (
+    <nav className="tabs" aria-label={t("serverDetails")}>
+      {visibleTabs.map((tab) => <button key={tab.id} type="button" className={activeTab === tab.id ? "active" : ""} onMouseEnter={() => void preloadTabModule(tab.id, selectedIsPalworld)} onFocus={() => void preloadTabModule(tab.id, selectedIsPalworld)} onClick={() => { setActiveTab(tab.id); setActiveSection(tab.id === "players" ? "players" : "home"); }}><Icon name={tab.icon} />{tab.label}</button>)}
+    </nav>
+  );
+
   return (
     <div className="app" data-theme={theme.resolved} data-accent={theme.appearance.accent} data-icon-scale={theme.appearance.iconScale} style={customAccentStyle(theme.appearance)}>
       <ExternalLinkHandler onError={setError} />
@@ -391,27 +397,45 @@ export function AppContent() {
           {!loading && activeSection === "discover" ? <DiscoverPage onCreate={() => { setInitialTemplateId(undefined); setShowWizard(true); }} onExtensions={() => selected ? openServer(selected.id, "extensions") : setToast(t("selectServerFirst"))} /> : null}
           {!loading && activeSection === "news" ? <NewsPage /> : null}
           {selected && (activeSection === "home" || activeSection === "players") ? (
-            <>
-               {activeTab === "overview" ? <HomeHub servers={servers} selected={selected} statuses={statuses} serverIcons={serverIcons} onSelect={openServer} onCreate={() => { setInitialTemplateId(undefined); setShowWizard(true); }} onInvite={() => setShowInvite(true)} onNavigate={setActiveTab} onCopyAddress={() => copy(selectedStatus.address)}>
+            activeTab === "overview" ? (
+              <HomeHub
+                servers={servers}
+                selected={selected}
+                statuses={statuses}
+                serverIcons={serverIcons}
+                onSelect={openServer}
+                onCreate={() => { setInitialTemplateId(undefined); setShowWizard(true); }}
+                onNavigate={setActiveTab}
+                onCopyAddress={() => copy(selectedStatus.address)}
+                below={
+                  <div className="home-overview-below">
+                    {serverNavigation}
+                    <Suspense fallback={<div className="center-state tab-loading" role="status"><span className="spinner" /><strong>{t("loadingServers")}</strong></div>}>
+                      {selectedIsPalworld
+                        ? <PalworldOverviewTab server={selected} status={selectedStatus} onCopyAddress={() => copy(selectedStatus.address)} notify={setToast} fail={setError} />
+                        : <OverviewTab server={selected} status={selectedStatus} logs={logs} onCopyAddress={() => copy(selectedStatus.address, "サーバーアドレスをコピーしました")} onOpenFolder={() => backend.openFolder(selected.id)} onUpdated={updateServer} notify={setToast} fail={setError} onNavigate={setActiveTab} onInvite={() => setShowInvite(true)} />}
+                    </Suspense>
+                  </div>
+                }
+              >
                 <ServerHeader server={selected} serverIcon={serverIcons[selected.id]} status={selectedStatus} busyAction={busyAction} onStart={() => runAction("start")} onStop={() => runAction("stop")} onRestart={() => runAction("restart")} />
-              </HomeHub> : <ServerHeader server={selected} serverIcon={serverIcons[selected.id]} status={selectedStatus} busyAction={busyAction} compact onStart={() => runAction("start")} onStop={() => runAction("stop")} onRestart={() => runAction("restart")} />}
-              <nav className="tabs" aria-label={t("serverDetails")}>
-                {visibleTabs.map((tab) => <button key={tab.id} type="button" className={activeTab === tab.id ? "active" : ""} onMouseEnter={() => void preloadTabModule(tab.id, selectedIsPalworld)} onFocus={() => void preloadTabModule(tab.id, selectedIsPalworld)} onClick={() => { setActiveTab(tab.id); setActiveSection(tab.id === "players" ? "players" : "home"); }}><Icon name={tab.icon} />{tab.label}</button>)}
-              </nav>
-              <Suspense fallback={<div className="center-state tab-loading" role="status"><span className="spinner" /><strong>{t("loadingServers")}</strong></div>}>
-                {activeTab === "overview" ? selectedIsPalworld
-                  ? <PalworldOverviewTab server={selected} status={selectedStatus} onCopyAddress={() => copy(selectedStatus.address)} notify={setToast} fail={setError} />
-                  : <OverviewTab server={selected} status={selectedStatus} logs={logs} onCopyAddress={() => copy(selectedStatus.address, "サーバーアドレスをコピーしました")} onOpenFolder={() => backend.openFolder(selected.id)} onUpdated={updateServer} notify={setToast} fail={setError} onNavigate={setActiveTab} onInvite={() => setShowInvite(true)} /> : null}
-                {activeTab === "console" ? <ConsoleTab logs={logs} running={selectedStatus.state === "running"} onClear={() => { backend.clearLogs(selected.id); setLogs([]); }} onCopy={(value) => copy(value)} onSave={saveLogs} onCommand={sendCommand} commandsEnabled={!selectedIsPalworld} commandUnavailableMessage={selectedIsPalworld ? palworldText(locale, "readOnlyLogs") : undefined} /> : null}
-                {activeTab === "players" ? selectedIsPalworld ? <PalworldPlayersTab server={selected} status={selectedStatus} /> : <PlayerAccessTab server={selected} status={selectedStatus} notify={setToast} fail={setError} /> : null}
-                {activeTab === "files" ? <ServerFilesTab server={selected} status={selectedStatus} /> : null}
-                {!selectedIsPalworld && activeTab === "extensions" ? <ExtensionsTab server={selected} status={selectedStatus} notify={setToast} fail={setError} /> : null}
-                {activeTab === "operations" ? <OperationsCenterTab key={selected.id} server={selected} status={selectedStatus} onUpdated={updateServer} notify={setToast} fail={setError} /> : null}
-                {!selectedIsPalworld && activeTab === "lab" ? <ServerLabTab server={selected} status={selectedStatus} onUpdated={updateServer} notify={setToast} fail={setError} /> : null}
-                {!selectedIsPalworld && activeTab === "safety" ? <SafetyToolsTab server={selected} status={selectedStatus} onUpdated={updateServer} notify={setToast} fail={setError} /> : null}
-                {activeTab === "settings" ? selectedIsPalworld ? <PalworldSettingsTab server={selected} status={selectedStatus} onUpdated={updateServer} notify={setToast} fail={setError} /> : <SettingsTab server={selected} serverIcon={serverIcons[selected.id]} onServerIconChanged={updateServerIcon} status={selectedStatus} onUpdated={updateServer} notify={setToast} fail={setError} /> : null}
-              </Suspense>
-            </>
+              </HomeHub>
+            ) : (
+              <>
+                <ServerHeader server={selected} serverIcon={serverIcons[selected.id]} status={selectedStatus} busyAction={busyAction} compact onStart={() => runAction("start")} onStop={() => runAction("stop")} onRestart={() => runAction("restart")} />
+                {serverNavigation}
+                <Suspense fallback={<div className="center-state tab-loading" role="status"><span className="spinner" /><strong>{t("loadingServers")}</strong></div>}>
+                  {activeTab === "console" ? <ConsoleTab logs={logs} running={selectedStatus.state === "running"} onClear={() => { backend.clearLogs(selected.id); setLogs([]); }} onCopy={(value) => copy(value)} onSave={saveLogs} onCommand={sendCommand} commandsEnabled={!selectedIsPalworld} commandUnavailableMessage={selectedIsPalworld ? palworldText(locale, "readOnlyLogs") : undefined} /> : null}
+                  {activeTab === "players" ? selectedIsPalworld ? <PalworldPlayersTab server={selected} status={selectedStatus} /> : <PlayerAccessTab server={selected} status={selectedStatus} notify={setToast} fail={setError} /> : null}
+                  {activeTab === "files" ? <ServerFilesTab server={selected} status={selectedStatus} /> : null}
+                  {!selectedIsPalworld && activeTab === "extensions" ? <ExtensionsTab server={selected} status={selectedStatus} notify={setToast} fail={setError} /> : null}
+                  {activeTab === "operations" ? <OperationsCenterTab key={selected.id} server={selected} status={selectedStatus} onUpdated={updateServer} notify={setToast} fail={setError} /> : null}
+                  {!selectedIsPalworld && activeTab === "lab" ? <ServerLabTab server={selected} status={selectedStatus} onUpdated={updateServer} notify={setToast} fail={setError} /> : null}
+                  {!selectedIsPalworld && activeTab === "safety" ? <SafetyToolsTab server={selected} status={selectedStatus} onUpdated={updateServer} notify={setToast} fail={setError} /> : null}
+                  {activeTab === "settings" ? selectedIsPalworld ? <PalworldSettingsTab server={selected} status={selectedStatus} onUpdated={updateServer} notify={setToast} fail={setError} /> : <SettingsTab server={selected} serverIcon={serverIcons[selected.id]} onServerIconChanged={updateServerIcon} status={selectedStatus} onUpdated={updateServer} notify={setToast} fail={setError} /> : null}
+                </Suspense>
+              </>
+            )
           ) : null}
         </main>
       </div>

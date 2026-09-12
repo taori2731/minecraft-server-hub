@@ -282,9 +282,9 @@ async function desktopOr<T>(command: string, args: Record<string, unknown>, fall
 
 export const backend = {
   isDesktop: inDesktop,
-  getAppVersion: () => inDesktop ? import("@tauri-apps/api/app").then(({ getVersion }) => getVersion()) : Promise.resolve("0.3.2"),
+  getAppVersion: () => inDesktop ? import("@tauri-apps/api/app").then(({ getVersion }) => getVersion()) : Promise.resolve("0.4.1"),
   quitApp: () => desktopOr<void>("quit_app", {}, () => undefined),
-  checkAppUpdate: (endpoint?: string) => desktopOr<AppUpdateInfo>("check_app_update", { endpoint: endpoint?.trim() || null }, () => ({ configured: true, currentVersion: "0.3.2", available: false })),
+  checkAppUpdate: (endpoint?: string) => desktopOr<AppUpdateInfo>("check_app_update", { endpoint: endpoint?.trim() || null }, () => ({ configured: true, currentVersion: "0.4.1", available: false })),
   installAppUpdate: (expectedVersion: string, endpoint?: string) => desktopOr<void>("install_app_update", { expectedVersion, endpoint: endpoint?.trim() || null }, () => Promise.reject(new Error("Update installation is only available in the installed Windows app."))),
   listServers: () => desktopOr<ServerProfile[]>("list_servers", {}, () => [...demoServers]),
   getAutomationSettings: (serverId: string) => desktopOr<AutomationSettings>("get_automation_settings", { serverId }, () => ({ serverId, autoStopEnabled: false, idleMinutes: 30, notifyStartup: true, notifyPlayerJoin: true, notifyCrash: true, notifyBackupFailure: true, updatedAt: new Date().toISOString() })),
