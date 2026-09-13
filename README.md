@@ -1,6 +1,8 @@
-# Minecraft Server Hub
+# TomoNode
 
-Windows向けのMinecraft・Palworld専用サーバー管理アプリです。Vanilla、Paper、Fabric、Forge、NeoForge、Bedrock Dedicated Serverに加え、Valve公式SteamCMDから取得するPalworld Dedicated Serverの新規作成、起動、ローカル監視、保存、安全停止に対応しています。Minecraft側では既存フォルダー取り込み、Java選択、ログ、ローカル診断、バックアップ／復元、拡張機能、構成プロファイル、テンプレート、確認付き更新、ダーク／ライトテーマを引き続き利用できます。
+> 移行期間限定のお知らせ: TomoNodeの旧称はMinecraft Server Hubです。リポジトリ名、パッケージ名、保存形式などの互換性値は従来のまま維持します。
+
+Windows向けのゲームサーバー管理アプリです。Minecraft Java／BedrockとPalworldのサーバーについて、Vanilla、Paper、Fabric、Forge、NeoForge、Bedrock Dedicated Server、Palworld Dedicated Serverの新規作成、起動、ローカル監視、保存、安全停止に対応しています。Minecraft側では既存フォルダー取り込み、Java選択、ログ、ローカル診断、バックアップ／復元、拡張機能、構成プロファイル、テンプレート、確認付き更新、ダーク／ライトテーマを引き続き利用できます。
 
 ## Palworld PW0–PW2
 
@@ -46,7 +48,19 @@ Rustバックエンドは `cd src-tauri; cargo test`、紹介サイトは `cd we
 
 実サーバー作成は各公式配布元からファイルを取得します。外部配布サイトの完全な互換性を保証するものではありません。
 
-このプロジェクトはMojang Studios、Microsoft、Pocketpair、Valveの公式製品ではなく、承認・提携を受けたものではありません。公開前に仮称を独自名へ変更します。
+## 公開版と安全な実行
+
+現在公開されている版は0.4.1です。TomoNode名称変更版は準備中です。0.4.1のWindowsパッケージ名とアプリ表示は旧名称の場合があります。
+
+- [GitHub Release v0.4.1](https://github.com/taori2731/minecraft-server-hub-releases/releases/tag/v0.4.1)
+- インストーラー: [Minecraft.Server.Hub_0.4.1_x64-setup.exe](https://github.com/taori2731/minecraft-server-hub-releases/releases/download/v0.4.1/Minecraft.Server.Hub_0.4.1_x64-setup.exe)
+- SHA-256: `D05359C3986B8DDA40508D6A5CD2BB4A328DBDE828661BED58E6B105134214AA`（公開[SHA256SUMS.txt](https://github.com/taori2731/minecraft-server-hub-releases/releases/download/v0.4.1/SHA256SUMS.txt)と照合）
+- 更新マニフェスト: [latest.json](https://github.com/taori2731/minecraft-server-hub-releases/releases/download/v0.4.1/latest.json)
+- Tauri Updater署名資産: [隣接.sig](https://github.com/taori2731/minecraft-server-hub-releases/releases/download/v0.4.1/Minecraft.Server.Hub_0.4.1_x64-setup.exe.sig)。`latest.json`の`signature`欄はこの`.sig`の内容と一致します。これはWindows Authenticode署名を意味しません。
+- Windows Authenticode署名は確認済みではありません。SmartScreenが警告を表示する可能性があるため、実行前に公式ReleaseのURL、Windowsの発行元表示、ファイル名、SHA-256を確認し、不一致や不明点があれば実行しないでください。
+- アンインストールだけで外部サーバーフォルダーやワールドを削除しません。削除・移動の前にサーバー、ワールド、設定、バックアップを確認してください。
+
+TomoNodeはMinecraft、Mojang Studios、Microsoft、Palworld、Pocketpair、Valveの公式製品・提携製品ではなく、各社の承認・提携を受けていない独立プロジェクトです。
 
 ## Code signing policy
 
@@ -54,4 +68,4 @@ Rustバックエンドは `cd src-tauri; cargo test`、紹介サイトは `cd we
 
 ## License
 
-Minecraft Server Hub is licensed under the Apache License 2.0. See [LICENSE](LICENSE).
+TomoNode is licensed under the Apache License 2.0. See [LICENSE](LICENSE).

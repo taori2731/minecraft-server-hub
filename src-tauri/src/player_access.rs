@@ -12,6 +12,8 @@ use crate::{
     models::{PlayerAccessEntry, ServerProfile, UpdatePlayerAccessInput},
 };
 
+const PLAYER_ACCESS_SOURCE: &str = "Minecraft Server Hub";
+
 pub fn list(profile: &ServerProfile, kind: &str) -> AppResult<Vec<PlayerAccessEntry>> {
     let file_name = file_for_kind(profile, kind)?;
     let path = Path::new(&profile.root_path).join(file_name);
@@ -188,7 +190,7 @@ pub async fn update_offline(
             serde_json::json!({
                 "ip": target,
                 "created": minecraft_timestamp(),
-                "source": "Minecraft Server Hub",
+                "source": PLAYER_ACCESS_SOURCE,
                 "expires": "forever",
                 "reason": if reason.is_empty() { "Banned by an operator." } else { reason },
             })
@@ -218,7 +220,7 @@ pub async fn update_offline(
                     "uuid": uuid,
                     "name": verified_name,
                     "created": minecraft_timestamp(),
-                    "source": "Minecraft Server Hub",
+                    "source": PLAYER_ACCESS_SOURCE,
                     "expires": "forever",
                     "reason": if reason.is_empty() { "Banned by an operator." } else { reason },
                 }),
@@ -989,8 +991,8 @@ fn mask_ip(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        canonical_uuid, command, entry_from_value, floodgate_username_prefix, private_id,
-        resolve_player_profile, update_offline,
+        PLAYER_ACCESS_SOURCE, canonical_uuid, command, entry_from_value, floodgate_username_prefix,
+        private_id, resolve_player_profile, update_offline,
     };
     use crate::models::{BasicSettings, ServerProfile, UpdatePlayerAccessInput};
     use serde_json::json;
@@ -1146,6 +1148,32 @@ mod tests {
                 super::list(&profile, "banned_ips").unwrap()[0].label,
                 "203.0.***.***"
             );
+
+            // These are external Minecraft JSON compatibility values, not the UI brand.
+            let banned_ips: serde_json::Value =
+                serde_json::from_slice(&std::fs::read(root.join("banned-ips.json")).unwrap())
+                    .unwrap();
+            assert_eq!(banned_ips[0]["source"], PLAYER_ACCESS_SOURCE);
+            assert_eq!(banned_ips[0]["source"], "Minecraft Server Hub");
+            assert_ne!(banned_ips[0]["source"], crate::PRODUCT_DISPLAY_NAME);
+
+            let ban_player = UpdatePlayerAccessInput {
+                server_id: profile.id.clone(),
+                kind: "banned_players".into(),
+                target: "Player123".into(),
+                entry_id: None,
+                add: true,
+                reason: Some("test".into()),
+            };
+            update_offline(&client, &profile, &ban_player)
+                .await
+                .unwrap();
+            let banned_players: serde_json::Value =
+                serde_json::from_slice(&std::fs::read(root.join("banned-players.json")).unwrap())
+                    .unwrap();
+            assert_eq!(banned_players[0]["source"], PLAYER_ACCESS_SOURCE);
+            assert_eq!(banned_players[0]["source"], "Minecraft Server Hub");
+            assert_ne!(banned_players[0]["source"], crate::PRODUCT_DISPLAY_NAME);
         });
         let history = root.join(".server-hub/player-access-history");
         assert!(history.is_dir());

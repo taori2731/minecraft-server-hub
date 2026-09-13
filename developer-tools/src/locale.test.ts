@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { developerBrand } from "./brand";
 import { getLocalePack, loadLocalePack, locales, validateLocalePack, type LocalePack } from "./locale";
 
 describe("dynamic locale packs", () => {
@@ -15,6 +16,11 @@ describe("dynamic locale packs", () => {
         expect(Object.values(pack[section]).every((value) => value.trim().length > 0)).toBe(true);
       }
       expect(Object.keys(pack.quality).sort()).toEqual(Object.keys(english.quality).sort());
+      expect(pack.catalog.appName).toBe(developerBrand.productName);
+      expect(pack.catalog.appName).not.toContain("Minecraft Server Hub");
+      expect(pack.catalog.workspaceHint).toContain("TomoNode");
+      expect(pack.catalog.workspaceInvalid).toContain("TomoNode");
+      expect(pack.commandPalette.chooseWorkspaceHint).toContain("TomoNode");
     }
   });
 

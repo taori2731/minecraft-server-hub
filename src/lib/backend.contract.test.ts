@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { backend } from "./backend";
+import { brand } from "./brand";
 
 describe("ブラウザ用バックエンド契約", () => {
   it("作成から安全停止・Delete確認削除まで本番と同じ状態遷移を保つ", async () => {
@@ -62,5 +63,12 @@ describe("ブラウザ用バックエンド契約", () => {
     await backend.stop(created.id);
     await expect(backend.deleteServer({ serverId: created.id, deleteFiles: true, confirmationText: "Delete" })).resolves.toEqual({ deletedFiles: true, backupPath: "C:\\Backups\\before-server-delete.zip" });
     expect((await backend.listServers()).some((server) => server.id === created.id)).toBe(false);
+  });
+
+  it("ブラウザデモの一時保存先は旧アプリデータ領域を維持する", async () => {
+    const plan = await backend.tunnelAgentInstallPlan("demo-paper");
+
+    expect(plan.temporaryPath).toContain(`\\AppData\\Roaming\\${brand.legacyProductName}\\`);
+    expect(plan.temporaryPath).not.toContain(`\\AppData\\Roaming\\${brand.productName}\\`);
   });
 });

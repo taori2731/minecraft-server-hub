@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { brand } from "./brand";
 import type {
   CreateServerInput,
   CrossplayInstallInput,
@@ -282,9 +283,9 @@ async function desktopOr<T>(command: string, args: Record<string, unknown>, fall
 
 export const backend = {
   isDesktop: inDesktop,
-  getAppVersion: () => inDesktop ? import("@tauri-apps/api/app").then(({ getVersion }) => getVersion()) : Promise.resolve("0.4.1"),
+  getAppVersion: () => inDesktop ? import("@tauri-apps/api/app").then(({ getVersion }) => getVersion()) : Promise.resolve("0.4.3"),
   quitApp: () => desktopOr<void>("quit_app", {}, () => undefined),
-  checkAppUpdate: (endpoint?: string) => desktopOr<AppUpdateInfo>("check_app_update", { endpoint: endpoint?.trim() || null }, () => ({ configured: true, currentVersion: "0.4.1", available: false })),
+  checkAppUpdate: (endpoint?: string) => desktopOr<AppUpdateInfo>("check_app_update", { endpoint: endpoint?.trim() || null }, () => ({ configured: true, currentVersion: "0.4.3", available: false })),
   installAppUpdate: (expectedVersion: string, endpoint?: string) => desktopOr<void>("install_app_update", { expectedVersion, endpoint: endpoint?.trim() || null }, () => Promise.reject(new Error("Update installation is only available in the installed Windows app."))),
   listServers: () => desktopOr<ServerProfile[]>("list_servers", {}, () => [...demoServers]),
   getAutomationSettings: (serverId: string) => desktopOr<AutomationSettings>("get_automation_settings", { serverId }, () => ({ serverId, autoStopEnabled: false, idleMinutes: 30, notifyStartup: true, notifyPlayerJoin: true, notifyCrash: true, notifyBackupFailure: true, updatedAt: new Date().toISOString() })),
@@ -725,7 +726,7 @@ export const backend = {
   tunnelAgentInstallPlan: (serverId: string) => desktopOr<TunnelAgentInstallPlan>("get_tunnel_agent_install_plan", { serverId }, () => {
     const current = demoTunnels.get(serverId);
     const installedValidation = current?.agentVerified ? { valid: true, providerId: "playit", agentPath: current.agentPath ?? "C:\\Program Files\\playit_gg\\bin\\playit.exe", version: current.agentVersion ?? "1.0.10-demo", sha256: "browser-demo-not-verified", verificationMethod: "ブラウザデモ", message: "ブラウザデモでは実ファイルを検証しません" } : undefined;
-    return { providerId: "playit", version: "1.0.10", sourceUrl: "https://github.com/playit-cloud/playit-agent/releases/download/v1.0.10/playit-windows-x86_64-signed.msi", sizeBytes: 6_070_272, checksumSha256: "18c022281fcfe578fb0d614ac6dc1d36cd6885b4a5439b97655768cd2a82bdc1", publisher: "Developed Methods LLC", licenseName: "BSD-2-Clause", licenseUrl: "https://github.com/playit-cloud/playit-agent/blob/v1.0.10/LICENSE.txt", installScope: "このPCの全ユーザー（Windowsサービスを含む）", installPath: "C:\\Program Files\\playit_gg", temporaryPath: "C:\\Users\\demo\\AppData\\Roaming\\Minecraft Server Hub\\tunnel-installers\\playit-v1.0.10-x64-signed.msi", alreadyInstalled: Boolean(installedValidation), installedValidation };
+    return { providerId: "playit", version: "1.0.10", sourceUrl: "https://github.com/playit-cloud/playit-agent/releases/download/v1.0.10/playit-windows-x86_64-signed.msi", sizeBytes: 6_070_272, checksumSha256: "18c022281fcfe578fb0d614ac6dc1d36cd6885b4a5439b97655768cd2a82bdc1", publisher: "Developed Methods LLC", licenseName: "BSD-2-Clause", licenseUrl: "https://github.com/playit-cloud/playit-agent/blob/v1.0.10/LICENSE.txt", installScope: "このPCの全ユーザー（Windowsサービスを含む）", installPath: "C:\\Program Files\\playit_gg", temporaryPath: `C:\\Users\\demo\\AppData\\Roaming\\${brand.legacyProductName}\\tunnel-installers\\playit-v1.0.10-x64-signed.msi`, alreadyInstalled: Boolean(installedValidation), installedValidation };
   }),
   installTunnelAgent: (input: InstallTunnelAgentInput) => desktopOr<TunnelAgentValidation>("install_tunnel_agent", { input }, () => {
     const current = demoTunnels.get(input.serverId);
@@ -863,13 +864,13 @@ export async function selectLogDestination(defaultName: string): Promise<string 
 export async function selectMigrationExport(defaultName: string): Promise<string | null> {
   if (!inDesktop) return `C:\\Downloads\\${defaultName}`;
   const { save } = await import("@tauri-apps/plugin-dialog");
-  return save({ defaultPath: defaultName, filters: [{ name: "Minecraft Server Hub Move", extensions: ["mshmove"] }] });
+  return save({ defaultPath: defaultName, filters: [{ name: `${brand.productName} Move`, extensions: ["mshmove"] }] });
 }
 
 export async function selectMigrationImport(): Promise<string | null> {
   if (!inDesktop) return "C:\\Downloads\\server.mshmove";
   const { open } = await import("@tauri-apps/plugin-dialog");
-  const selected = await open({ multiple: false, title: "サーバー引っ越しファイルを選択", filters: [{ name: "Minecraft Server Hub Move", extensions: ["mshmove"] }] });
+  const selected = await open({ multiple: false, title: "サーバー引っ越しファイルを選択", filters: [{ name: `${brand.productName} Move`, extensions: ["mshmove"] }] });
   return typeof selected === "string" ? selected : null;
 }
 
@@ -883,14 +884,14 @@ export async function selectExtensionFile(kind: ExtensionKind): Promise<string |
 export async function selectProfileImport(): Promise<string | null> {
   if (!inDesktop) return "C:\\Downloads\\server-profile.json";
   const { open } = await import("@tauri-apps/plugin-dialog");
-  const selected = await open({ multiple: false, title: "Modパックプロファイルを選択", filters: [{ name: "Minecraft Server Hub Profile", extensions: ["json"] }] });
+  const selected = await open({ multiple: false, title: "Modパックプロファイルを選択", filters: [{ name: `${brand.productName} Profile`, extensions: ["json"] }] });
   return typeof selected === "string" ? selected : null;
 }
 
 export async function selectProfileExport(defaultName: string): Promise<string | null> {
   if (!inDesktop) return null;
   const { save } = await import("@tauri-apps/plugin-dialog");
-  return save({ defaultPath: defaultName, filters: [{ name: "Minecraft Server Hub Profile", extensions: ["json"] }] });
+  return save({ defaultPath: defaultName, filters: [{ name: `${brand.productName} Profile`, extensions: ["json"] }] });
 }
 
 export async function confirmDanger(message: string): Promise<boolean> {

@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import type { AdvisoryScanResult, DeveloperInspectionReport, LicenseEvidenceReport } from "./types";
 import { createThirdPartyNoticesExport } from "./thirdPartyNotices";
+import { developerBrand } from "./brand";
 import { compactEmbeddedReport, hydrateEmbeddedReport } from "./embeddedReport";
 import { ADVISORY_CACHE_TTL_MS, DEFAULT_LICENSE_POLICY, applySupplyChainGates, buildLicenseReviewItems, buildLicenseReviewState, createCycloneDx, createDependencyCsv, createLicenseReviewExport, createSpdx, createSupplyChainExport, createWindowsLicenseEvidenceExport, persistLicenseReviewRecords, readAdvisoryCache, readLicensePolicy, readLicenseReviewRecords, removeLicenseReviewRecord, saveAdvisoryCache, saveLicensePolicy, uniqueDependencyPackages, upsertLicenseReviewRecord } from "./supplyChain";
 
@@ -90,13 +91,26 @@ describe("supply-chain exports", () => {
     const csv = createDependencyCsv(report);
     expect(cyclone).toMatchObject({ bomFormat: "CycloneDX", specVersion: "1.7", version: 1 });
     expect(cyclone.components).toHaveLength(2);
+    expect(cyclone.metadata.tools.components[0]).toMatchObject({ name: developerBrand.productName, version: "0.3.1" });
+    expect(cyclone.metadata.tools.components[0].description).toContain(developerBrand.consumerProductName);
+    expect(cyclone.metadata.component).toMatchObject({
+      name: developerBrand.consumerProductName,
+      version: report.expectedVersion,
+      "bom-ref": "pkg:generic/minecraft-server-hub@0.3.2",
+      description: developerBrand.descriptorEn,
+    });
+    expect(cyclone.metadata.component.properties).toContainEqual({ name: "msh:display-title", value: developerBrand.consumerProductName });
     expect(spdx).toMatchObject({ spdxVersion: "SPDX-2.3", dataLicense: "CC0-1.0" });
+    expect(spdx.name).toBe(`${developerBrand.consumerProductName} ${report.expectedVersion} dependencies`);
+    expect(spdx.documentNamespace).toBe("https://minecraft-server-hub.local/spdx/bbbbbbbb-bbbb-5bbb-bbbb-bbbbbbbbbbbb");
+    expect(spdx.documentComment).toContain(developerBrand.productName);
+    expect(spdx.creationInfo.creators).toEqual([`Tool: ${developerBrand.productName}-0.3.1`]);
     expect(spdx.packages).toHaveLength(2);
     expect(JSON.stringify(cyclone)).not.toContain("C:/workspace");
     expect(csv).toContain('"component","ecosystem","name","version"');
     expect(csv.split("\r\n")).toHaveLength(5);
-    expect(createSupplyChainExport(report, "cyclonedx").filename).toMatch(/\.cdx\.json$/);
-    expect(createSupplyChainExport(report, "spdx").filename).toMatch(/\.spdx\.json$/);
+    expect(createSupplyChainExport(report, "cyclonedx").filename).toBe("minecraft-server-hub-0.3.2-bom.cdx.json");
+    expect(createSupplyChainExport(report, "spdx").filename).toBe("minecraft-server-hub-0.3.2-sbom.spdx.json");
     expect(createSupplyChainExport(report, "csv").mime).toContain("text/csv");
   });
 

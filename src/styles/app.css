@@ -319,6 +319,9 @@ a { color: var(--accent); }
 @media (prefers-reduced-motion: reduce) { .wizard-loading-stages span::after, .operation-progress-track.indeterminate > span { animation: none; transform: none; } }
 .error-banner { margin-top: 18px; padding: 13px; display: flex; gap: 10px; align-items: flex-start; color: var(--danger); background: var(--danger-soft); border: 1px solid color-mix(in srgb, var(--danger) 55%, var(--border)); border-radius: 8px; }
 .wizard-footer { min-height: 78px; padding: 14px 24px; display: flex; justify-content: space-between; align-items: center; border-top: 1px solid var(--border-subtle); background: var(--bg-soft); }
+.migration-notice { width: min(620px, 100%); }
+.migration-notice .wizard-body { min-height: 0; }
+.migration-notice .wizard-body p { max-width: 680px; line-height: 1.75; }
 .global-error, .toast { position: fixed; z-index: 120; left: 50%; bottom: 28px; transform: translateX(-50%); min-width: 300px; max-width: min(700px, calc(100vw - 40px)); min-height: 48px; padding: 10px 14px; display: flex; align-items: center; gap: 11px; border-radius: 10px; box-shadow: var(--shadow); }
 .global-error { color: var(--danger); background: var(--surface); border: 1px solid var(--danger); }
 .global-error button { margin-left: auto; border: 0; background: transparent; color: inherit; }

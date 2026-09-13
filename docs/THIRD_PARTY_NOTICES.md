@@ -2,9 +2,9 @@
 
 ## SteamCMD and Palworld Dedicated Server
 
-SteamCMD and Palworld Dedicated Server are not bundled with Minecraft Server Hub. When the user explicitly creates a Palworld server, the app downloads SteamCMD from Valve's fixed official HTTPS distribution URL and uses anonymous Steam App `2394010` installation. The downloaded software remains subject to its publishers' terms and licenses.
+SteamCMD and Palworld Dedicated Server are not bundled with TomoNode. When the user explicitly creates a Palworld server, the app downloads SteamCMD from Valve's fixed official HTTPS distribution URL and uses anonymous Steam App `2394010` installation. The downloaded software remains subject to its publishers' terms and licenses.
 
-Steam and SteamCMD are trademarks or registered trademarks of Valve Corporation. Palworld is a trademark of Pocketpair, Inc. Minecraft Server Hub is not endorsed by or affiliated with Valve or Pocketpair.
+Steam and SteamCMD are trademarks or registered trademarks of Valve Corporation. Palworld is a trademark of Pocketpair, Inc. TomoNode is an independent project and is not an official product of, endorsed by, sponsored by, or affiliated with Minecraft, Mojang Studios, Microsoft, Palworld, Pocketpair, or Valve.
 
 ## MPL-2.0 dependencies
 
@@ -18,7 +18,7 @@ The `selectors 0.36.1` crate archive declares `MPL-2.0` and contains the standar
 
 Source: https://github.com/playit-cloud/playit-agent/tree/v1.0.10
 
-The signed Windows agent is not bundled with Minecraft Server Hub. After explicit confirmation, it can be downloaded from the official v1.0.10 GitHub Release and installed under its own license and service configuration.
+The signed Windows agent is not bundled with TomoNode. After explicit confirmation, it can be downloaded from the official v1.0.10 GitHub Release and installed under its own license and service configuration.
 
 Copyright 2022 Developed Methods LLC
 

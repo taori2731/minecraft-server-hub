@@ -1,4 +1,5 @@
 import type { Locale } from "./locale";
+import { developerBrand } from "./brand";
 
 export interface DeveloperUpdateCopy {
   nav: string;
@@ -90,8 +91,19 @@ const completionCopies: Record<Locale, DeveloperCompletionCopy> = {
   "pt-BR": { completionKicker: "D31 · VERSÃO FINAL", completionTitle: "Base de atualização finalizada", completionDescription: "Atualizações assinadas, preservação em caso de falha, feed HTTPS dedicado e interface em nove idiomas ficam definidos como limite da versão final.", completionMaintenance: "O trabalho futuro focará correções e compatibilidade." },
 };
 
+function applyDeveloperBrand(copy: DeveloperUpdateCopy & DeveloperCompletionCopy): DeveloperUpdateCopy & DeveloperCompletionCopy {
+  const display = (value: string) => value
+    .replaceAll("Minecraft Server Hub", developerBrand.consumerProductName)
+    .replaceAll("Minecraft-Server-Hub", developerBrand.consumerProductName)
+    .replaceAll("Developer-Tools", developerBrand.productName)
+    .replaceAll("Developer Tools", developerBrand.productName);
+  const branded = Object.fromEntries(Object.entries(copy).map(([key, value]) => [key, display(value)])) as unknown as DeveloperUpdateCopy & DeveloperCompletionCopy;
+  branded.completionDescription = `${developerBrand.productName}: ${branded.completionDescription}`;
+  return branded;
+}
+
 export const developerUpdateLocales: Record<Locale, DeveloperUpdateCopy & DeveloperCompletionCopy> = Object.fromEntries(
-  Object.entries(copies).map(([locale, copy]) => [locale, { ...copy, ...completionCopies[locale as Locale] }]),
+  Object.entries(copies).map(([locale, copy]) => [locale, applyDeveloperBrand({ ...copy, ...completionCopies[locale as Locale] })]),
 ) as Record<Locale, DeveloperUpdateCopy & DeveloperCompletionCopy>;
 export const developerUpdateText = (locale: Locale): DeveloperUpdateCopy & DeveloperCompletionCopy => developerUpdateLocales[locale];
 

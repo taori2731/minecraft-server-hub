@@ -1,7 +1,9 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { backend } from "../lib/backend";
-import { I18nProvider } from "../lib/i18n";
+import { brand } from "../lib/brand";
+import { I18nProvider, translate, type AppLocale } from "../lib/i18n";
+import { getRebrandCopy } from "../lib/rebrandLocale";
 import type { RuntimeStatus } from "../types";
 import { AppSettingsDialog } from "./AppSettingsDialog";
 
@@ -39,7 +41,10 @@ describe("アプリ設定", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "プライバシー" }));
     expect(screen.getByText("プライバシーとライセンス")).toBeInTheDocument();
-    expect(screen.getByText("診断データ")).toBeInTheDocument();
+    const privacy = within(document.querySelector(".privacy-list")!);
+    expect(privacy.getByText(brand.productName)).toBeInTheDocument();
+    expect(privacy.getByText(brand.descriptorJa)).toBeInTheDocument();
+    expect(privacy.getByText("診断データ")).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "アンインストール" }));
     expect(screen.getByText("アプリをアンインストール")).toBeInTheDocument();
@@ -47,5 +52,22 @@ describe("アプリ設定", () => {
     await waitFor(() => expect(uninstall).toHaveBeenCalledOnce());
     expect(notify).toHaveBeenCalledWith("Windowsのアンインストール画面を開きました");
     expect(fail).not.toHaveBeenCalled();
+  });
+
+  it.each(["ja", "en", "de", "es", "fr", "ko", "pt-BR", "zh-CN", "zh-TW"] as const)("shows the non-affiliation statement with TomoNode in %s", async (locale: AppLocale) => {
+    localStorage.setItem("server-hub:language:v1", locale);
+    const server = (await backend.listServers()).find((item) => item.serverType === "paper")!;
+    const status: RuntimeStatus = { state: "stopped", playerCount: 0, maxPlayers: 20, memoryUsedMib: 0, uptimeSeconds: 0, address: "127.0.0.1:25565", cpuPercent: 0, tps: null, tpsSupported: false, pingLatencyMs: null };
+    vi.spyOn(backend, "listFixedPlayers").mockResolvedValue([]);
+
+    render(<I18nProvider><AppSettingsDialog server={server} status={status} servers={[server]} statuses={{ [server.id]: status }} onStatusesChanged={() => undefined} onAppearanceChanged={() => undefined} onClose={() => undefined} notify={() => undefined} fail={() => undefined} /></I18nProvider>);
+    fireEvent.click(screen.getByRole("button", { name: translate(locale, "privacy") }));
+
+    const privacy = document.querySelector(".privacy-list")!;
+    const copy = getRebrandCopy(locale);
+    expect(privacy).toHaveTextContent(brand.productName);
+    expect(privacy).toHaveTextContent(copy.nonAffiliationTitle);
+    expect(privacy).toHaveTextContent(copy.nonAffiliationBody);
+    expect(privacy).not.toHaveTextContent("公開前に製品名をMinecraft利用ガイドラインに合わせて再検討します");
   });
 });

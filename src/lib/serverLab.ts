@@ -1,4 +1,5 @@
 import type { BasicSettings, ServerProfile, ServerType } from "../types";
+import { brand } from "./brand";
 
 export type PlaystylePresetId = "survival" | "creative" | "peaceful" | "pvp";
 export type PerformancePresetId = "eco" | "balanced" | "range";
@@ -217,7 +218,7 @@ export function diffServerLabDraft(server: ServerProfile, draft: ServerLabDraft)
 export function formatPropertiesPatch(server: ServerProfile, draft: ServerLabDraft): string {
   const changes = diffServerLabDraft(server, draft);
   return [
-    "# Minecraft Server Hub - configuration draft",
+    `# ${brand.productName} - configuration draft`,
     `# ${server.name} / ${server.serverType} / ${server.minecraftVersion}`,
     "# Review only: apply through the app to create a safety backup.",
     ...changes.map((change) => `${change.property}=${change.after}`),

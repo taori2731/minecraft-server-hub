@@ -5,6 +5,7 @@ import { isValidUpdateEndpoint, readAppUpdatePreferences, storeAppUpdatePreferen
 import { useI18n } from "../lib/i18n";
 import type { AppUpdateInfo, AppUpdateProgress } from "../types";
 import { Icon } from "./Icon";
+import { brand } from "../lib/brand";
 
 function size(bytes: number) {
   return bytes >= 1024 ** 2 ? `${(bytes / 1024 ** 2).toFixed(1)} MiB` : `${Math.max(0, Math.round(bytes / 1024))} KiB`;
@@ -75,7 +76,7 @@ export function AppUpdatePanel({ hasActiveServers, notify, fail }: { hasActiveSe
   const progressPercent = progress?.totalBytes ? Math.min(100, progress.downloadedBytes / progress.totalBytes * 100) : undefined;
 
   return <>
-    <span className="section-kicker">SIGNED APP UPDATE</span>
+    <span className="section-kicker">{brand.productName} · SIGNED APP UPDATE</span>
     <h3>{text("title")}</h3>
     <p>{text("intro")}</p>
     <div className="app-update-card">

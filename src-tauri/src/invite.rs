@@ -16,6 +16,7 @@ use crate::{
 
 const LEASE_SECONDS: u32 = 600;
 const RENEW_SECONDS: u64 = 300;
+const UPNP_MAPPING_DESCRIPTION: &str = "Minecraft Server Hub";
 
 #[derive(Clone)]
 pub struct Publication {
@@ -122,7 +123,12 @@ pub fn publish(
     let gateway = search_gateway(Default::default())
         .map_err(|_| AppError::Validation("UPnP対応ルーターを見つけられませんでした。ルーターのUPnP設定または代替中継を確認してください".into()))?;
     let external_addr = gateway
-        .get_any_address(protocol, local_addr, LEASE_SECONDS, "Minecraft Server Hub")
+        .get_any_address(
+            protocol,
+            local_addr,
+            LEASE_SECONDS,
+            UPNP_MAPPING_DESCRIPTION,
+        )
         .map_err(|error| AppError::Other(format!("ルーターの自動公開に失敗しました: {error}")))?;
     let external_ip = match external_addr.ip() {
         IpAddr::V4(ip) if is_public_ipv4(ip) => ip,
@@ -227,7 +233,7 @@ fn spawn_renewal(server_id: String, token: String, publications: PublicationMap)
                         current.external_port,
                         current.local_addr,
                         LEASE_SECONDS,
-                        "Minecraft Server Hub",
+                        UPNP_MAPPING_DESCRIPTION,
                     )
                     .map_err(|error| error.to_string()),
                 Err(error) => Err(error.to_string()),
@@ -389,8 +395,8 @@ fn is_public_ipv4(ip: Ipv4Addr) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        PortMappingProtocol, Publication, PublicationMap, is_public_ipv4, join_address,
-        normalize_settings, status,
+        PortMappingProtocol, Publication, PublicationMap, UPNP_MAPPING_DESCRIPTION, is_public_ipv4,
+        join_address, normalize_settings, status,
     };
     use crate::models::InviteSettings;
     use std::{
@@ -456,5 +462,11 @@ mod tests {
             join_address("play.example.com", 52321),
             "play.example.com:52321"
         );
+    }
+
+    #[test]
+    fn keeps_legacy_upnp_mapping_label_for_router_compatibility_not_ui_brand() {
+        assert_eq!(UPNP_MAPPING_DESCRIPTION, "Minecraft Server Hub");
+        assert_ne!(UPNP_MAPPING_DESCRIPTION, crate::PRODUCT_DISPLAY_NAME);
     }
 }

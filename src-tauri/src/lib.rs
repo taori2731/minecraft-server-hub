@@ -72,6 +72,8 @@ use crate::{
     store::Store,
 };
 
+pub(crate) const PRODUCT_DISPLAY_NAME: &str = "TomoNode";
+
 #[tauri::command]
 async fn check_app_update(
     endpoint: Option<String>,
@@ -4000,7 +4002,8 @@ async fn create_server_files(
     std::fs::write(
         root.join("eula.txt"),
         format!(
-            "# Accepted explicitly in Minecraft Server Hub at {}\r\neula=true\r\n",
+            "# Accepted explicitly in {} at {}\r\neula=true\r\n",
+            PRODUCT_DISPLAY_NAME,
             Utc::now().to_rfc3339()
         ),
     )?;
@@ -4930,7 +4933,7 @@ pub fn run() {
             probe_tunnel_endpoint,
         ])
         .build(tauri::generate_context!())
-        .expect("Minecraft Server Hubの起動に失敗しました");
+        .expect("TomoNodeの起動に失敗しました");
 
     app.run(move |app_handle, event| match event {
         tauri::RunEvent::ExitRequested { api, .. } => {

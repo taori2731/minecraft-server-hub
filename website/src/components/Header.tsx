@@ -9,7 +9,7 @@ export function Header({ theme, onToggleTheme }: { theme: Theme; onToggleTheme: 
   const [menuOpen, setMenuOpen] = useState(false);
   return (
     <header className="site-header">
-      <a className="brand" href="#top" aria-label="Minecraft Server Hub トップへ"><Brand /></a>
+      <a className="brand" href="#top" aria-label="TomoNode トップへ"><Brand /></a>
       <nav className="desktop-nav" aria-label="メインナビゲーション">
         {navItems.map(([label, href]) => <a key={href} href={href}>{label}</a>)}
       </nav>
@@ -23,7 +23,7 @@ export function Header({ theme, onToggleTheme }: { theme: Theme; onToggleTheme: 
       </div>
       <nav className={`mobile-nav${menuOpen ? " is-open" : ""}`} id="mobile-navigation" aria-label="モバイルナビゲーション">
         {navItems.map(([label, href]) => <a key={href} href={href} onClick={() => setMenuOpen(false)}>{label}</a>)}
-        <a href="#download" onClick={() => setMenuOpen(false)}>Windows版を準備中</a>
+        <a href="#download" onClick={() => setMenuOpen(false)}>0.4.3をダウンロード</a>
       </nav>
     </header>
   );

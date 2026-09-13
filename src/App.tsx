@@ -14,10 +14,13 @@ import { customAccentStyle, readAppearance } from "./lib/appearance";
 import { readServerIcons, storeServerIcons, withServerIcon, type ServerIconMap } from "./lib/serverIcons";
 import { getDefaultPortForServerType, getServerMaxPlayers, getServerTabs, isPalworldServer } from "./lib/gameAdapter";
 import { palworldText } from "./lib/palworldLocale";
-import { readAppUpdatePreferences } from "./lib/appUpdate";
+import { dismissMigrationNotice, readAppUpdatePreferences, shouldShowMigrationNotice } from "./lib/appUpdate";
 import { appUpdateText } from "./lib/appUpdateLocale";
 import { workspaceText } from "./lib/workspaceLocale";
 import { homeText } from "./lib/homeLocale";
+import { brand, formatNotificationTitle } from "./lib/brand";
+import { rebrandText } from "./lib/rebrandLocale";
+import { MigrationNoticeDialog } from "./components/MigrationNoticeDialog";
 import type { AppSection, AppearanceSettings, DeleteServerResult, LogEntry, MonitoringSettings, RuntimeStatus, ServerProfile, TabId, ThemeMode } from "./types";
 
 const ConsoleTab = lazy(() => import("./components/ConsoleTab").then((module) => ({ default: module.ConsoleTab })));
@@ -139,12 +142,16 @@ export function AppContent() {
   const [toast, setToast] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
+  const [showMigrationNotice, setShowMigrationNotice] = useState(() => shouldShowMigrationNotice(backend.isDesktop));
   const [monitoring, setMonitoring] = useState<MonitoringSettings>(readMonitoring);
   const [serverIcons, setServerIcons] = useState<ServerIconMap>(readServerIcons);
   const deliveredWarnings = useRef(new Set<string>());
   const closePromptOpen = useRef(false);
   const startupUpdateChecked = useRef(false);
 
+  useEffect(() => {
+    document.title = brand.productName;
+  }, []);
 
   const selected = useMemo(() => servers.find((server) => server.id === selectedId), [servers, selectedId]);
   const selectedStatus = selected ? statuses[selected.id] ?? stoppedStatus(selected) : stoppedStatus();
@@ -255,7 +262,7 @@ export function AppContent() {
         const notifications = await import("@tauri-apps/plugin-notification");
         let allowed = await notifications.isPermissionGranted();
         if (!allowed) allowed = (await notifications.requestPermission()) === "granted";
-        if (allowed) notifications.sendNotification({ title: payload.title, body: payload.body });
+        if (allowed) notifications.sendNotification({ title: formatNotificationTitle(payload.title), body: payload.body });
       } catch { /* The in-app status remains available when Windows notifications are disabled. */ }
     })).then((dispose) => { unlisten = dispose; }).catch(() => undefined);
     return () => unlisten?.();
@@ -269,7 +276,7 @@ export function AppContent() {
       if (!active || closePromptOpen.current) return;
       closePromptOpen.current = true;
       try {
-        const confirmed = await confirmDanger("Minecraft Server Hubを終了しますか？\n\n起動中のサーバーがある場合は、先に安全停止してください。");
+        const confirmed = await confirmDanger(rebrandText(locale, "exitConfirm"));
         if (confirmed) await backend.quitApp();
       } catch (reason) {
         if (active) setError(String(reason));
@@ -360,11 +367,11 @@ export function AppContent() {
   );
 
   return (
-    <div className="app" data-theme={theme.resolved} data-accent={theme.appearance.accent} data-icon-scale={theme.appearance.iconScale} style={customAccentStyle(theme.appearance)}>
+    <div className="app" data-product-name={brand.productName} data-theme={theme.resolved} data-accent={theme.appearance.accent} data-icon-scale={theme.appearance.iconScale} style={customAccentStyle(theme.appearance)}>
       <ExternalLinkHandler onError={setError} />
-      <header className="titlebar">
+      <header className="titlebar" aria-label={brand.productName}>
         <div className="brand-mark" aria-hidden="true"><span /><span /><span /></div>
-        <strong>Minecraft Server Hub</strong>
+        <strong>{brand.productName}</strong>
         <span className="unofficial-label">{t("unofficial")}</span>
         <GlobalSearch servers={servers} onOpenServer={openServer} onSection={navigateSection} onSettings={() => setShowAppSettings(true)} />
         <div className="titlebar-actions">
@@ -390,8 +397,8 @@ export function AppContent() {
           </div>
         </nav>
         <main ref={workspaceRef} className="workspace" data-active-tab={activeTab}>
-          {loading ? <div className="center-state"><span className="spinner" /><strong>{t("loadingServers")}</strong></div> : null}
-          {!loading && !selected && activeSection === "home" ? <div className="center-state empty"><img src="/assets/voxel-server-island.png" alt="" /><h1>{t("firstServerTitle")}</h1><p>{t("firstServerBody")}</p><button className="primary-button" type="button" onClick={() => { setInitialTemplateId(undefined); setShowWizard(true); }}><Icon name="add" />{t("newServer")}</button></div> : null}
+          {loading ? <div className="center-state" role="status" aria-label={`${brand.productName}: ${t("loadingServers")}`}><span className="spinner" /><strong>{t("loadingServers")}</strong></div> : null}
+          {!loading && !selected && activeSection === "home" ? <div className="center-state empty" role="region" aria-label={`${brand.productName}: ${t("firstServerTitle")}`}><img src="/assets/voxel-server-island.png" alt="" /><h1>{t("firstServerTitle")}</h1><p>{t("firstServerBody")}</p><button className="primary-button" type="button" onClick={() => { setInitialTemplateId(undefined); setShowWizard(true); }}><Icon name="add" />{t("newServer")}</button></div> : null}
           {!loading && activeSection === "servers" ? <ServerDirectoryPage servers={servers} statuses={statuses} serverIcons={serverIcons} onOpen={openServer} onCreate={() => { setInitialTemplateId(undefined); setShowWizard(true); }} /> : null}
           {!loading && activeSection === "templates" ? <TemplatesPage onUse={createFromTemplate} /> : null}
           {!loading && activeSection === "discover" ? <DiscoverPage onCreate={() => { setInitialTemplateId(undefined); setShowWizard(true); }} onExtensions={() => selected ? openServer(selected.id, "extensions") : setToast(t("selectServerFirst"))} /> : null}
@@ -410,7 +417,7 @@ export function AppContent() {
                 below={
                   <div className="home-overview-below">
                     {serverNavigation}
-                    <Suspense fallback={<div className="center-state tab-loading" role="status"><span className="spinner" /><strong>{t("loadingServers")}</strong></div>}>
+                    <Suspense fallback={<div className="center-state tab-loading" role="status" aria-label={`${brand.productName}: ${t("loadingServers")}`}><span className="spinner" /><strong>{t("loadingServers")}</strong></div>}>
                       {selectedIsPalworld
                         ? <PalworldOverviewTab server={selected} status={selectedStatus} onCopyAddress={() => copy(selectedStatus.address)} notify={setToast} fail={setError} />
                         : <OverviewTab server={selected} status={selectedStatus} logs={logs} onCopyAddress={() => copy(selectedStatus.address, "サーバーアドレスをコピーしました")} onOpenFolder={() => backend.openFolder(selected.id)} onUpdated={updateServer} notify={setToast} fail={setError} onNavigate={setActiveTab} onInvite={() => setShowInvite(true)} />}
@@ -424,7 +431,7 @@ export function AppContent() {
               <>
                 <ServerHeader server={selected} serverIcon={serverIcons[selected.id]} status={selectedStatus} busyAction={busyAction} compact onStart={() => runAction("start")} onStop={() => runAction("stop")} onRestart={() => runAction("restart")} />
                 {serverNavigation}
-                <Suspense fallback={<div className="center-state tab-loading" role="status"><span className="spinner" /><strong>{t("loadingServers")}</strong></div>}>
+                <Suspense fallback={<div className="center-state tab-loading" role="status" aria-label={`${brand.productName}: ${t("loadingServers")}`}><span className="spinner" /><strong>{t("loadingServers")}</strong></div>}>
                   {activeTab === "console" ? <ConsoleTab logs={logs} running={selectedStatus.state === "running"} onClear={() => { backend.clearLogs(selected.id); setLogs([]); }} onCopy={(value) => copy(value)} onSave={saveLogs} onCommand={sendCommand} commandsEnabled={!selectedIsPalworld} commandUnavailableMessage={selectedIsPalworld ? palworldText(locale, "readOnlyLogs") : undefined} /> : null}
                   {activeTab === "players" ? selectedIsPalworld ? <PalworldPlayersTab server={selected} status={selectedStatus} /> : <PlayerAccessTab server={selected} status={selectedStatus} notify={setToast} fail={setError} /> : null}
                   {activeTab === "files" ? <ServerFilesTab server={selected} status={selectedStatus} /> : null}
@@ -463,6 +470,7 @@ export function AppContent() {
         detail={selectedIsPalworld ? palworldText(locale, busyAction === "stop" ? "safeShutdownDescription" : "phasePw1Description") : "プロセスとポートの状態を確認しています。ワールドの読み込みや保存には時間がかかる場合があります。"}
         stages={selectedIsPalworld ? busyAction === "stop" ? [palworldText(locale, "safeShutdownSaving"), palworldText(locale, "safeShutdownRequesting"), palworldText(locale, "safeShutdownWaiting")] : [palworldText(locale, "statusInstallingSteamCmd"), palworldText(locale, "statusPreparing"), palworldText(locale, "statusStarting")] : busyAction === "stop" ? ["保存要求", "停止確認", "状態更新"] : ["起動要求", "待受確認", "状態更新"]}
       /> : null}
+      {showMigrationNotice ? <MigrationNoticeDialog locale={locale} onClose={() => { dismissMigrationNotice(); setShowMigrationNotice(false); }} /> : null}
     </div>
   );
 }

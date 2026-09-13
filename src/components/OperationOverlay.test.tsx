@@ -2,6 +2,10 @@ import { render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import { OperationOverlay } from "./OperationOverlay";
 import { I18nProvider } from "../lib/i18n";
+import type { AppLocale } from "../lib/i18n";
+import { brand } from "../lib/brand";
+
+const locales: readonly AppLocale[] = ["ja", "en", "de", "es", "fr", "ko", "pt-BR", "zh-CN", "zh-TW"];
 
 describe("OperationOverlay", () => {
   it("explains that a long-running operation is still active", () => {
@@ -61,5 +65,14 @@ describe("OperationOverlay", () => {
     expect(progress).toHaveAttribute("aria-valuenow", "0");
     expect(screen.getByText("0.0%")).toBeInTheDocument();
     expect(screen.queryByText("—")).not.toBeInTheDocument();
+  });
+
+  it.each(locales)("keeps the TomoNode accessible name in the loading overlay for %s", (locale) => {
+    localStorage.setItem("server-hub:language:v1", locale);
+    const { unmount } = render(<I18nProvider><OperationOverlay title="Preparing the server" detail="Checking the server safely." stages={["Prepare", "Check", "Finish"]} /></I18nProvider>);
+    const status = screen.getByRole("status");
+    expect(status.getAttribute("aria-label")).toContain(brand.productName);
+    expect(status.textContent).not.toContain(brand.legacyProductName);
+    unmount();
   });
 });

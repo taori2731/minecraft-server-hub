@@ -1,6 +1,7 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { backend } from "../lib/backend";
+import { brand } from "../lib/brand";
 import { I18nProvider } from "../lib/i18n";
 import { AppUpdatePanel } from "./AppUpdatePanel";
 
@@ -14,6 +15,7 @@ describe("AppUpdatePanel", () => {
     const notify = vi.fn();
     const fail = vi.fn();
     render(<I18nProvider><AppUpdatePanel hasActiveServers={false} notify={notify} fail={fail} /></I18nProvider>);
+    expect(screen.getByText(`${brand.productName} · SIGNED APP UPDATE`)).toBeInTheDocument();
     expect(screen.getByText("Keep the app up to date")).toBeInTheDocument();
     expect(screen.getByText(/signed official update feed is active/i)).toBeInTheDocument();
     expect(screen.queryByLabelText("Update feed URL")).not.toBeInTheDocument();

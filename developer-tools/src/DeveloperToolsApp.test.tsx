@@ -4,6 +4,7 @@ import { getLocalePack, loadLocalePack, locales } from "./locale";
 import { DeveloperToolsApp } from "./DeveloperToolsApp";
 import { bundleText } from "./bundleLocale";
 import { qualityLabels } from "./qualityLocale";
+import { developerBrand } from "./brand";
 import type { DeveloperInspectionReport } from "./types";
 
 const report: DeveloperInspectionReport = {
@@ -59,6 +60,8 @@ describe("DeveloperToolsApp", () => {
   it("renders the read-only report and filters to release problems", async () => {
     localStorage.setItem("msh-developer-tools:locale", "en");
     render(<DeveloperToolsApp initialLocale="en" initialReport={report} deferPanels={false} />);
+    expect(screen.getByText(developerBrand.productName, { exact: true })).toBeInTheDocument();
+    expect(screen.getByLabelText(developerBrand.productName)).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Release readiness dashboard" })).toBeInTheDocument();
     expect(screen.getByText("Blockers").parentElement).toHaveTextContent("1");
     expect(screen.getByText("Embedded development snapshot")).toBeInTheDocument();
@@ -67,7 +70,7 @@ describe("DeveloperToolsApp", () => {
     expect(screen.getByRole("heading", { name: "Artifact history" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Release plan preview" })).toBeInTheDocument();
     expect(await screen.findByRole("heading", { name: "Release handoff pack" }, { timeout: 10_000 })).toBeInTheDocument();
-    expect(screen.getByText(/Release handoff is available only in the installed Windows Developer Tools app/)).toBeInTheDocument();
+    expect(screen.getByText(/Release handoff is available only in the installed Windows TomoNode Developer Tools app/)).toBeInTheDocument();
     expect(await screen.findByRole("heading", { name: "Performance budget & bundle center" }, { timeout: 10_000 })).toBeInTheDocument();
     expect(await screen.findByRole("heading", { name: "Test & quality evidence center" })).toBeInTheDocument();
     expect(screen.getByText("Current evidence")).toBeInTheDocument();

@@ -63,10 +63,9 @@ if ($isBuild) {
     if ([string]::IsNullOrWhiteSpace($signingKey)) {
         throw "Signing key is empty: $key"
     }
-    if ($signingKey -match '(?im)minisign encrypted secret key' -and
-        [string]::IsNullOrWhiteSpace([Environment]::GetEnvironmentVariable("TAURI_SIGNING_PRIVATE_KEY_PASSWORD", [EnvironmentVariableTarget]::Process))) {
-        throw "The encrypted Tauri updater key requires TAURI_SIGNING_PRIVATE_KEY_PASSWORD in the current process environment."
-    }
+    # An encrypted minisign key may legitimately use an empty password. Let the
+    # Tauri signer perform the authoritative key/password validation instead of
+    # rejecting that valid configuration here.
 
     if ([string]::IsNullOrWhiteSpace($TargetDir)) {
         $stamp = (Get-Date).ToUniversalTime().ToString("yyyyMMdd-HHmmss-fff")

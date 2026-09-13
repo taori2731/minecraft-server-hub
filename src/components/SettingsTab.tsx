@@ -8,6 +8,7 @@ import { OperationOverlay } from "./OperationOverlay";
 import { ServerIcon } from "./ServerIcon";
 import { prepareServerIcon, ServerIconError } from "../lib/serverIcons";
 import { useI18n } from "../lib/i18n";
+import { brand } from "../lib/brand";
 
 const javaToggleFields: { key: keyof BasicSettings; label: string; property: string; note?: string; danger?: boolean }[] = [
   { key: "whitelist", label: "ホワイトリスト", property: "white-list", note: "公開サーバーでは有効を推奨" },
@@ -81,7 +82,7 @@ export function SettingsTab({ server, serverIcon, onServerIconChanged, status, o
   };
   const patch = <K extends keyof BasicSettings>(key: K, value: BasicSettings[K]) => setSettings((current) => ({ ...current, [key]: value }));
   const save = async () => {
-    if (!settings.onlineMode && !await confirmDanger(`${isBedrock ? "Xbox" : "公式"}アカウント認証を無効にしますか？\n\nプレイヤー名のなりすましを防げなくなるため、Minecraft Server Hubからのインターネット公開は利用できなくなります。`)) return;
+    if (!settings.onlineMode && !await confirmDanger(`${isBedrock ? "Xbox" : "公式"}アカウント認証を無効にしますか？\n\nプレイヤー名のなりすましを防げなくなるため、${brand.productName}からのインターネット公開は利用できなくなります。`)) return;
     setSaving(true);
     try { const updated = await backend.updateSettings(server.id, settings, memory, port); onUpdated(updated); notify("安全バックアップ後に設定を保存しました。再起動すると反映されます"); }
     catch (reason) { fail(String(reason)); } finally { setSaving(false); }

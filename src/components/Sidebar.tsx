@@ -7,6 +7,7 @@ import { ServerIcon } from "./ServerIcon";
 import { getNetworkProtocolForServerType, getServerVersionLabel, isPalworldServer } from "../lib/gameAdapter";
 import { homeText } from "../lib/homeLocale";
 import { workspaceText } from "../lib/workspaceLocale";
+import { brand } from "../lib/brand";
 
 interface Props {
   servers: ServerProfile[];
@@ -33,7 +34,7 @@ export function Sidebar({ servers, serverIcons, selectedId, statuses, onSelect, 
   const runningCount = servers.filter((server) => statuses[server.id]?.state === "running").length;
   const stateText = { running: t("running"), starting: t("starting"), stopping: t("stopping"), restarting: t("restarting"), stopped: t("stopped"), crashed: t("crashed"), error: t("crashed"), unknown: "—" } as const;
   return (
-    <aside className="sidebar" aria-label={t("serverList")}>
+    <aside className="sidebar" aria-label={`${brand.productName}: ${t("serverList")}`}>
       <nav className="sidebar-navigation" aria-label={homeText(locale).home}>
         <button type="button" className={activeSection === "home" ? "active" : ""} disabled={!selectedId} onClick={() => onSectionNavigate("home")}><Icon name="chart" />{homeText(locale).home}</button>
         <button type="button" className={activeSection === "servers" ? "active" : ""} onClick={() => onSectionNavigate("servers")}><Icon name="server" />{workspace.servers}</button>

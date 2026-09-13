@@ -39,5 +39,5 @@ fn main() {
             release_evidence::verify_release_evidence_pack,
         ])
         .run(tauri::generate_context!())
-        .expect("Minecraft Server Hub Developer Tools failed to start");
+        .expect("TomoNode Developer Tools failed to start");
 }

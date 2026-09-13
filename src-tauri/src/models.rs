@@ -222,7 +222,7 @@ fn default_palworld_base_workers() -> u16 {
 impl Default for PalworldSettings {
     fn default() -> Self {
         Self {
-            server_description: "Managed locally by Minecraft Server Hub".into(),
+            server_description: format!("Managed locally by {}", crate::PRODUCT_DISPLAY_NAME),
             max_players: default_palworld_max_players(),
             rest_api_port: default_palworld_rest_port(),
             rest_api_enabled: true,
@@ -1067,5 +1067,13 @@ mod palworld_settings_compatibility_tests {
         assert_eq!(settings.base_camp_max_num_in_guild, 4);
         assert_eq!(settings.base_camp_worker_max_num, 15);
         assert!(!settings.join_code_configured);
+    }
+
+    #[test]
+    fn new_default_palworld_description_uses_current_product_name() {
+        let settings = PalworldSettings::default();
+
+        assert_eq!(settings.server_description, "Managed locally by TomoNode");
+        assert!(!settings.server_description.contains("Minecraft Server Hub"));
     }
 }

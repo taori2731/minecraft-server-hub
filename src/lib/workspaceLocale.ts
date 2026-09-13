@@ -1,4 +1,5 @@
 import type { AppLocale } from "./i18n";
+import { brand } from "./brand";
 
 const values = {
   ja: ["サーバー、プレイヤー、テンプレート、設定を検索…", "サーバー", "プレイヤー", "テンプレート", "発見", "ニュース", "すべてのサーバー", "構成から始める", "対応内容を探す", "更新情報とお知らせ", "検索結果はありません", "機能", "設定"],
@@ -47,15 +48,15 @@ const announcementText: Record<AppLocale, readonly string[]> = {
 
 export function workspaceAnnouncements(locale: AppLocale) {
   const titles: Record<AppLocale, readonly string[]> = {
-    ja: ["Minecraft Server Hub 0.4.1", "Palworld専用サーバー対応", "より安全な削除とバックアップ"],
-    en: ["Minecraft Server Hub 0.4.1", "Palworld dedicated server support", "Safer deletion and backups"],
-    "zh-CN": ["Minecraft Server Hub 0.4.1", "支持 Palworld 专用服务器", "更安全的删除与备份"],
-    "zh-TW": ["Minecraft Server Hub 0.4.1", "支援 Palworld 專用伺服器", "更安全的刪除與備份"],
-    ko: ["Minecraft Server Hub 0.4.1", "Palworld 전용 서버 지원", "더 안전한 삭제와 백업"],
-    es: ["Minecraft Server Hub 0.4.1", "Compatibilidad con servidor de Palworld", "Eliminación y copias más seguras"],
-    de: ["Minecraft Server Hub 0.4.1", "Palworld-Dedicated-Server", "Sicheres Löschen und Sichern"],
-    fr: ["Minecraft Server Hub 0.4.1", "Prise en charge du serveur Palworld", "Suppression et sauvegardes plus sûres"],
-    "pt-BR": ["Minecraft Server Hub 0.4.1", "Suporte a servidor dedicado Palworld", "Exclusão e backups mais seguros"],
+    ja: [`${brand.productName} 0.4.3`, "ショートカット名をTomoNodeへ統一", "既存サーバーと更新互換性を維持"],
+    en: [`${brand.productName} 0.4.3`, "Shortcut name unified as TomoNode", "Existing server and update compatibility preserved"],
+    "zh-CN": [`${brand.productName} 0.4.3`, "快捷方式名称统一为 TomoNode", "保留现有服务器和更新兼容性"],
+    "zh-TW": [`${brand.productName} 0.4.3`, "捷徑名稱統一為 TomoNode", "保留現有伺服器和更新相容性"],
+    ko: [`${brand.productName} 0.4.3`, "바로 가기 이름을 TomoNode로 통일", "기존 서버 및 업데이트 호환성 유지"],
+    es: [`${brand.productName} 0.4.3`, "Acceso directo unificado como TomoNode", "Compatibilidad conservada con servidores y actualizaciones"],
+    de: [`${brand.productName} 0.4.3`, "Verknüpfungsname auf TomoNode vereinheitlicht", "Bestehende Server- und Update-Kompatibilität bleibt erhalten"],
+    fr: [`${brand.productName} 0.4.3`, "Raccourci renommé TomoNode", "Compatibilité préservée avec les serveurs et mises à jour existants"],
+    "pt-BR": [`${brand.productName} 0.4.3`, "Atalho padronizado como TomoNode", "Compatibilidade preservada com servidores e atualizações existentes"],
   };
   return announcementText[locale].map((body, index) => ({ date: ["2026-09-12", "2026-09-11", "2026-09-10"][index], tag: ["APP", "PALWORLD", "SAFETY"][index], title: titles[locale][index], body }));
 }

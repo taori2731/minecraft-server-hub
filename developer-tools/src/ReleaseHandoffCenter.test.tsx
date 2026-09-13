@@ -58,7 +58,7 @@ describe("ReleaseHandoffCenter", () => {
 
   it("keeps handoff actions unavailable in browser mode", () => {
     render(<ReleaseHandoffCenter locale="en" workspaceRoot={workspace} isDesktop={false} />);
-    expect(screen.getByText(/installed Windows Developer Tools app/)).toBeInTheDocument();
+    expect(screen.getByText(/installed Windows TomoNode Developer Tools app/)).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Prepare handoff" })).not.toBeInTheDocument();
   });
 

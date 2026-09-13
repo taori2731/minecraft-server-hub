@@ -42,6 +42,30 @@ let browser;
   await page.goto(url, { waitUntil: "networkidle" });
   fs.mkdirSync(path.join(root, "artifacts"), { recursive: true });
   await page.getByRole("heading", { name: "Survival World" }).waitFor();
+  const requiredViewports = [
+    { name: "1280x720", width: 1280, height: 720 },
+    { name: "1536x960", width: 1536, height: 960 },
+    { name: "200-percent-equivalent", width: 768, height: 480 },
+  ];
+  for (const viewport of requiredViewports) {
+    await page.setViewportSize({ width: viewport.width, height: viewport.height });
+    const viewportCheck = await page.evaluate(() => {
+      const app = document.querySelector(".app");
+      const titlebar = document.querySelector(".titlebar");
+      return {
+        pageWidth: document.documentElement.clientWidth,
+        scrollWidth: document.documentElement.scrollWidth,
+        appWidth: app?.getBoundingClientRect().width ?? 0,
+        titlebarWidth: titlebar?.getBoundingClientRect().width ?? 0,
+      };
+    });
+    if (viewportCheck.scrollWidth > viewportCheck.pageWidth + 1 || viewportCheck.appWidth > viewportCheck.pageWidth + 1 || viewportCheck.titlebarWidth > viewportCheck.pageWidth + 1) {
+      throw new Error(`${viewport.name}で横方向のクリッピングまたはオーバーフローがあります: ${JSON.stringify(viewportCheck)}`);
+    }
+    await page.locator(".titlebar").getByText("TomoNode", { exact: true }).waitFor();
+    await page.screenshot({ path: path.join(root, "artifacts", `brand-${viewport.name}.png`), fullPage: true });
+  }
+  await page.setViewportSize({ width: 1580, height: 980 });
   const globalSearch = page.getByRole("searchbox", { name: "サーバー、プレイヤー、テンプレート、設定を検索…" });
   await globalSearch.fill("Creative Test");
   await page.locator(".global-search-results").getByRole("button", { name: /Creative Test/ }).click();
@@ -424,7 +448,16 @@ let browser;
     let leftovers = await findJapaneseUiLeftovers();
     if (leftovers.length) throw new Error(`${locale}の言語設定画面に日本語の表示漏れがあります: ${leftovers.slice(0, 5).join(" / ")}`);
 
-    await page.locator(".app-settings-dialog .icon-button").click();
+    const privacyNavigation = page.locator(".settings-dialog-layout > nav > button").nth(4);
+    await privacyNavigation.click();
+    const privacyText = await page.locator(".privacy-list").textContent();
+    for (const name of ["Minecraft", "Mojang", "Microsoft", "Palworld", "Pocketpair", "Valve"]) {
+      if (!privacyText?.includes(name)) throw new Error(`${locale}の非提携表示に${name}が含まれていません`);
+    }
+    if (!privacyText?.includes("TomoNode") || privacyText.includes("公開前に製品名をMinecraft利用ガイドラインに合わせて再検討します")) {
+      throw new Error(`${locale}の非提携表示または旧プライバシー文言が不正です`);
+    }
+    await page.locator(".app-settings-dialog > .wizard-header .icon-button").click();
     const serverTabs = page.locator(".tabs > button");
     const tabCount = await serverTabs.count();
     for (let index = 0; index < tabCount; index += 1) {

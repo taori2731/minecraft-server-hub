@@ -158,7 +158,7 @@ describe("Developer Tools backend native boundary", () => {
     await expect(developerBackend.exportSupplyChainReport("report.csv", "text/csv", "name,version")).resolves.toBe("C:\\exports\\report.csv");
     await expect(developerBackend.verifySupplyChainReport("expected-digest")).resolves.toMatchObject({ documentType: "minecraft-server-hub-windows-x64-license-evidence" });
 
-    expect(open).toHaveBeenCalledWith(expect.objectContaining({ directory: true, multiple: false }));
+    expect(open).toHaveBeenCalledWith(expect.objectContaining({ directory: true, multiple: false, title: "TomoNode workspace" }));
     expect(invoke).toHaveBeenCalledWith("inspect_workspace", { workspaceRoot: "C:\\workspace", checkRemoteFeed: false });
     expect(invoke).toHaveBeenCalledWith("scan_dependency_advisories", { workspaceRoot: "C:\\workspace", expectedDigest: "expected-digest", consent: true });
     expect(invoke).toHaveBeenCalledWith("collect_license_evidence", { workspaceRoot: "C:\\workspace", expectedDigest: "expected-digest" });

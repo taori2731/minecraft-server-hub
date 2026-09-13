@@ -1,6 +1,6 @@
 # アプリ更新の配布手順
 
-Minecraft Server Hubの通常のアプリ内更新は、0.3.9と同じTauri Updaterの署名方式を使います。Windows NSISインストーラーに隣接する`.sig`を、アプリへ埋め込んだ`src-tauri/updater-public.key`で検証できることが更新の必須条件です。
+TomoNodeの通常のアプリ内更新は、0.3.9と同じTauri Updaterの署名方式を使います。Windows NSISインストーラーに隣接する`.sig`を、アプリへ埋め込んだ`src-tauri/updater-public.key`で検証できることが更新の必須条件です。0.4.1の公開資産名や更新フィードURLは、既存利用者との互換性のため旧名称のまま維持します。
 
 SignPathへの申請とWindows Authenticode署名は、通常のアプリ内更新の必須条件ではありません。このリリース経路ではSignPathへ成果物を送らず、Authenticodeの`Valid`ゲートも設けません。Windowsの発行元表示が必要な場合のAuthenticode署名は、更新のTauri署名ゲートとは別の任意の工程として扱います。
 

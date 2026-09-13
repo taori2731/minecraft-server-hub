@@ -2,8 +2,13 @@ import { fireEvent, render, screen, waitFor, within } from "@testing-library/rea
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import App from "./App";
 import { backend } from "./lib/backend";
+import { brand } from "./lib/brand";
+import { getRebrandCopy } from "./lib/rebrandLocale";
+import { translate, type AppLocale } from "./lib/i18n";
 
-describe("Minecraft Server Hub", () => {
+const rebrandLocales: readonly AppLocale[] = ["ja", "en", "de", "es", "fr", "ko", "pt-BR", "zh-CN", "zh-TW"];
+
+describe(brand.productName, () => {
   beforeEach(async () => {
     localStorage.clear();
     localStorage.setItem("server-hub:language:v1", "ja");
@@ -15,13 +20,60 @@ describe("Minecraft Server Hub", () => {
   it("renders the primary dashboard and server state", async () => {
     render(<App />);
     expect(await screen.findByRole("heading", { name: "Survival World" })).toBeInTheDocument();
+    expect(document.title).toBe(brand.productName);
     expect((await screen.findAllByText("起動中")).length).toBeGreaterThan(0);
     expect(within(document.querySelector(".metric-grid")!).getByText("localhost:25565")).toBeInTheDocument();
+    expect(within(document.querySelector(".titlebar")!).getByText(brand.productName)).toBeInTheDocument();
+    expect(within(document.querySelector(".titlebar")!).getByText("非公式ツール")).toBeInTheDocument();
     const monitor = screen.getByLabelText("負荷監視");
     expect(await within(monitor).findByText(/^[123] ms$/)).toBeInTheDocument();
     expect(within(monitor).getByText(/^19\.[89]$/)).toBeInTheDocument();
     expect(within(monitor).queryByText("未取得")).not.toBeInTheDocument();
     expect(within(document.querySelector(".titlebar")!).getByRole("button", { name: /新しいサーバー/ })).toBeInTheDocument();
+  });
+
+  it.each(rebrandLocales)("brands the shell, loading state, and empty state in %s", async (locale) => {
+    localStorage.setItem("server-hub:language:v1", locale);
+    const loadingServers = vi.spyOn(backend, "listServers").mockImplementation(() => new Promise<never[]>(() => undefined));
+    try {
+      const { unmount } = render(<App />);
+      expect(await screen.findByRole("status", { name: `${brand.productName}: ${translate(locale, "loadingServers")}` })).toBeInTheDocument();
+      expect(within(document.querySelector(".titlebar")!).getByText(brand.productName)).toBeInTheDocument();
+      unmount();
+    } finally {
+      loadingServers.mockRestore();
+    }
+
+    const emptyServers = vi.spyOn(backend, "listServers").mockResolvedValue([]);
+    try {
+      render(<App />);
+      expect(await screen.findByRole("region", { name: `${brand.productName}: ${translate(locale, "firstServerTitle")}` })).toBeInTheDocument();
+    } finally {
+      emptyServers.mockRestore();
+    }
+  });
+
+  it("shows and dismisses the existing-user TomoNode migration notice once", async () => {
+    const originalDesktop = backend.isDesktop;
+    backend.isDesktop = true;
+    try {
+      const { unmount } = render(<App />);
+      await screen.findByRole("heading", { name: "Survival World" });
+      const notice = await screen.findByRole("dialog", { name: getRebrandCopy("ja").migrationTitle });
+      expect(notice).toHaveTextContent(`${brand.legacyProductName}は${brand.productName}になりました`);
+      expect(notice).toHaveTextContent("サーバー、ワールド、設定、バックアップは維持されています");
+      expect(notice).toHaveTextContent("更新署名と配布元は従来と同じです");
+      fireEvent.click(within(notice).getByRole("button", { name: "確認して閉じる" }));
+      await waitFor(() => expect(screen.queryByRole("dialog", { name: getRebrandCopy("ja").migrationTitle })).not.toBeInTheDocument());
+      expect(JSON.parse(localStorage.getItem("server-hub:app-update:v1") ?? "null")).toMatchObject({ migrationNoticeDismissed: true });
+      unmount();
+
+      render(<App />);
+      await screen.findByRole("heading", { name: "Survival World" });
+      expect(screen.queryByRole("dialog", { name: getRebrandCopy("ja").migrationTitle })).not.toBeInTheDocument();
+    } finally {
+      backend.isDesktop = originalDesktop;
+    }
   });
 
   it("filters servers without changing selection and selects Palworld from the home cards", async () => {

@@ -6,6 +6,8 @@ const website = path.resolve(__dirname, "..");
 const root = path.resolve(website, "..");
 const { chromium } = require(path.join(root, "node_modules", "playwright"));
 const url = "http://127.0.0.1:4173/";
+const outputArgIndex = process.argv.indexOf("--output-dir");
+const outputDir = outputArgIndex >= 0 && process.argv[outputArgIndex + 1] ? path.resolve(process.argv[outputArgIndex + 1]) : path.join(website, "artifacts");
 let server;
 let browser;
 
@@ -27,22 +29,25 @@ async function waitForServer() {
   const desktop = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
   desktop.on("console", (message) => { if (message.type() === "error") errors.push(message.text()); }); desktop.on("pageerror", (error) => errors.push(error.message));
   await desktop.goto(url, { waitUntil: "networkidle" });
+  if (await desktop.title() !== "TomoNode｜Windows向けゲームサーバー管理アプリ") throw new Error("紹介サイトのタイトルがTomoNodeではありません");
+  await desktop.getByRole("link", { name: "TomoNode トップへ" }).waitFor();
   await desktop.getByRole("heading", { name: "今できることと、まだできないこと" }).scrollIntoViewIfNeeded();
   await Promise.all([
     desktop.getByRole("heading", { name: "Minecraft Java", exact: true }).waitFor(),
     desktop.getByRole("heading", { name: "Palworld", exact: true }).waitFor(),
-    desktop.getByRole("heading", { name: "一般配布", exact: true }).waitFor(),
+    desktop.getByRole("heading", { name: "Windowsパッケージ表示", exact: true }).waitFor(),
+    desktop.getByRole("link", { name: "0.4.3をダウンロード" }).first().waitFor(),
   ]);
-  fs.mkdirSync(path.join(website, "artifacts"), { recursive: true });
+  fs.mkdirSync(outputDir, { recursive: true });
   const initialTheme = await desktop.locator("html").getAttribute("data-theme");
-  await desktop.screenshot({ path: path.join(website, "artifacts", `site-updates-${initialTheme}.png`), fullPage: false });
+  await desktop.screenshot({ path: path.join(outputDir, `site-updates-${initialTheme}.png`), fullPage: false });
   await desktop.getByRole("button", { name: /テーマに切り替える/ }).click(); await desktop.waitForTimeout(250);
   const toggledTheme = await desktop.locator("html").getAttribute("data-theme");
   if (initialTheme === toggledTheme) throw new Error("紹介サイトのテーマが切り替わりませんでした");
-  await desktop.screenshot({ path: path.join(website, "artifacts", `site-updates-${toggledTheme}.png`), fullPage: false });
+  await desktop.screenshot({ path: path.join(outputDir, `site-updates-${toggledTheme}.png`), fullPage: false });
   const mobile = await browser.newPage({ viewport: { width: 390, height: 844 } });
   await mobile.goto(url, { waitUntil: "networkidle" }); await mobile.getByRole("button", { name: "メニューを開く" }).click(); await mobile.getByRole("navigation", { name: "モバイルナビゲーション" }).getByRole("link", { name: "現在の状態" }).waitFor(); await mobile.waitForTimeout(250);
-  await mobile.screenshot({ path: path.join(website, "artifacts", "site-mobile-menu.png"), fullPage: false });
+  await mobile.screenshot({ path: path.join(outputDir, "site-mobile-menu.png"), fullPage: false });
   if (errors.length) throw new Error(`紹介サイトのブラウザエラー: ${errors.join(" | ")}`);
   console.log("Website UI smoke PASS: desktop dark/light, update status, mobile navigation");
 })().catch((error) => { console.error(error); process.exitCode = 1; }).finally(async () => { if (browser) await browser.close().catch(() => undefined); if (server) server.kill(); });

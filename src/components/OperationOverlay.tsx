@@ -1,6 +1,7 @@
 import { createPortal } from "react-dom";
 import { useI18n, type AppLocale } from "../lib/i18n";
 import { translateGeneratedText } from "../lib/documentTranslation";
+import { brand } from "../lib/brand";
 
 type Props = {
   title: string;
@@ -45,7 +46,7 @@ export function OperationOverlay({ title, detail, stages = ["準備", "安全確
     return hasUntranslatedJapanese(stage, translated, locale) ? `${messages.step} ${index + 1}` : translated;
   });
   return createPortal(
-    <div className="wizard-loading-overlay operation-overlay" role="status" aria-live="polite" aria-busy="true">
+    <div className="wizard-loading-overlay operation-overlay" role="status" aria-label={`${brand.productName}: ${messages.flow}`} aria-live="polite" aria-busy="true">
       <span className="spinner large" />
       <strong>{hasUntranslatedJapanese(title, translatedTitle, locale) ? messages.title : translatedTitle}</strong>
       <p>{hasUntranslatedJapanese(detail, translatedDetail, locale) ? messages.detail : translatedDetail}</p>

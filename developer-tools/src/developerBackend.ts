@@ -1,4 +1,5 @@
 import type { AdvisoryScanResult, DeveloperInspectionReport, DeveloperUpdateInfo, LicenseEvidenceReport, LicenseLedgerBackupPreview, LicenseLedgerExportReceipt, LicenseLedgerRecoveryEntry, LicenseLedgerRecoveryList, LicenseLedgerRestoreReceipt, LicenseLedgerSnapshot, LicenseReviewDraft, LicenseReviewItem, LicenseReviewRecord, ReleaseApprovalPreview, ReleaseApprovalReceipt, ReleaseEvidenceExportReceipt, ReleaseEvidencePackPreview, ReleaseEvidenceVerification, ReleaseHandoffExportReceipt, ReleaseHandoffPreview, ReleaseHandoffVerification, SupplyChainReportVerification } from "./types";
+import { developerBrand } from "./brand";
 
 const isDesktop = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 
@@ -32,7 +33,7 @@ export const developerBackend = {
   async chooseWorkspace(): Promise<string | undefined> {
     if (!isDesktop) return undefined;
     const { open } = await import("@tauri-apps/plugin-dialog");
-    const selected = await open({ directory: true, multiple: false, title: "Minecraft Server Hub workspace" });
+    const selected = await open({ directory: true, multiple: false, title: `${developerBrand.consumerProductName} workspace` });
     return typeof selected === "string" ? selected : undefined;
   },
   async inspectWorkspace(workspaceRoot: string, checkRemoteFeed = true): Promise<DeveloperInspectionReport> {

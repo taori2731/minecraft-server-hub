@@ -90,7 +90,7 @@ export default defineConfig(async ({ mode }) => {
         if (!report.withinBudget) this.error(`Developer Tools entry chunk ${entryRawBytes} bytes exceeds the ${entryBudgetBytes} byte budget.`);
       },
     }],
-    define: { __MSH_EMBEDDED_REPORT_URL__: JSON.stringify(mode === "development" ? "/__developer-tools/embedded-report" : "./developer-report.json") },
+    define: { __MSH_EMBEDDED_REPORT_URL__: JSON.stringify(mode === "production" ? "./developer-report.json" : "/__developer-tools/embedded-report") },
     clearScreen: false,
     server: { host: "127.0.0.1", port: 1421, strictPort: true },
     build: { outDir: "dist", emptyOutDir: true },

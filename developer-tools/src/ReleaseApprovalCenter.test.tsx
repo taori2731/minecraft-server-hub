@@ -58,7 +58,7 @@ describe("ReleaseApprovalCenter", () => {
 
   it("keeps approval actions unavailable in browser mode", () => {
     render(<ReleaseApprovalCenter locale="en" workspaceRoot={workspace} isDesktop={false} />);
-    expect(screen.getByText(/installed Windows Developer Tools app/)).toBeInTheDocument();
+    expect(screen.getByText(/installed Windows TomoNode Developer Tools app/)).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Evaluate candidate" })).not.toBeInTheDocument();
   });
 

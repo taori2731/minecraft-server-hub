@@ -361,7 +361,26 @@ mod tests {
         assert!(columns.iter().any(|name| name == "game_kind"));
         assert!(columns.iter().any(|name| name == "game_settings_json"));
 
+        let mut server_ids = store
+            .list_servers()
+            .unwrap()
+            .into_iter()
+            .map(|server| server.id)
+            .collect::<Vec<_>>();
+        server_ids.sort();
+        assert_eq!(server_ids, vec!["legacy-bedrock", "legacy-java"]);
+
         drop(store);
+        let reopened = Store::open(&database).unwrap();
+        let mut reopened_ids = reopened
+            .list_servers()
+            .unwrap()
+            .into_iter()
+            .map(|server| server.id)
+            .collect::<Vec<_>>();
+        reopened_ids.sort();
+        assert_eq!(reopened_ids, vec!["legacy-bedrock", "legacy-java"]);
+        drop(reopened);
         let _ = std::fs::remove_file(database);
     }
 

@@ -1,5 +1,6 @@
 import { lazy, startTransition, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { DeferredPanelFallback, DeferredSection } from "./DeferredSection";
+import { developerBrand } from "./brand";
 import { deferredText } from "./deferredLocale";
 import { commandPaletteText } from "./commandPaletteLocale";
 import { capabilitySecurityText } from "./capabilitySecurityLocale";
@@ -164,6 +165,10 @@ export function DeveloperToolsApp({ initialLocale, initialReport, deferPanels = 
   const [advisoryResult, setAdvisoryResult] = useState<AdvisoryScanResult | undefined>(() => readAdvisoryCache(initialReport.dependencyInventory.advisoryPreview.requestDigest));
   const [advisoryBusy, setAdvisoryBusy] = useState(false);
   const [advisoryError, setAdvisoryError] = useState("");
+
+  useEffect(() => {
+    document.title = developerBrand.productName;
+  }, []);
   const [exporting, setExporting] = useState(false);
   const [exportMessage, setExportMessage] = useState("");
   const [verificationBusy, setVerificationBusy] = useState(false);
@@ -616,7 +621,7 @@ export function DeveloperToolsApp({ initialLocale, initialReport, deferPanels = 
 
   return <div className="developer-shell">
     <header className="topbar">
-        <div className="brand"><span className="brand-mark" aria-hidden="true"><i /><i /><i /></span><div><strong>{text(locale, "appName")}</strong><small>Phase D31</small></div></div>
+        <div className="brand" aria-label={developerBrand.productName}><span className="brand-mark" aria-hidden="true"><i /><i /><i /></span><div><strong>{text(locale, "appName")}</strong><small>Phase D31</small></div></div>
       <div className="topbar-actions"><label><span>{text(locale, "language")}</span><select aria-label={text(locale, "language")} value={pendingLocale} onChange={(event) => void changeLocale(event.target.value as Locale)}>{languageOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label>{localeLoading ? <span className="locale-load-state" role="status">{localeLoaderMessages[locale].loading}</span> : localeError && failedLocale ? <span className="locale-load-state error" role="alert">{localeLoaderMessages[locale].failed}<button type="button" onClick={() => void changeLocale(failedLocale)}>{localeLoaderMessages[locale].retry}</button></span> : null}<button className="command-palette-open" type="button" aria-haspopup="dialog" title={`${paletteLabels.open} · ${paletteLabels.shortcut}`} onClick={(event) => { commandPaletteReturnFocusRef.current = event.currentTarget; setCommandPaletteOpen(true); }}><span>{paletteLabels.open}</span><kbd>{paletteLabels.shortcut}</kbd></button><button className="refresh-button" type="button" onClick={refresh} disabled={busy || localeLoading}>{busy ? text(locale, "refreshing") : text(locale, "refresh")}</button></div>
     </header>
 

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { mkdtemp, mkdir, readFile, rm, utimes, writeFile } from "node:fs/promises";
+import { access, mkdtemp, mkdir, readFile, rm, utimes, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -9,18 +9,19 @@ import { buildAdvisoryPreview, cargoHostApplicability, computeQualitySourceSnaps
 
 const execFileAsync = promisify(execFile);
 
-async function fixture() {
+async function fixture({ workspaceFlavor = "legacy" } = {}) {
   const publicKeyText = "untrusted comment: minisign public key E7620F1842B4E81F\nRWQf6LRCGA9i53mlYecO4IzT51TGPpvWucNSCh1CBM0QTaLn73Y7GFO3\n";
   const publicKey = Buffer.from(publicKeyText, "utf8").toString("base64");
   const signatureText = "untrusted comment: signature from minisign secret key\nRUQf6LRCGA9i559r3g7V1qNyJDApGip8MfqcadIgT9CuhV3EMhHoN1mGTkUidF/z7SrlQgXdy8ofjb7bNJJylDOocrCo8KLzZwo=\ntrusted comment: timestamp:1556193335\tfile:test\ny/rUw2y8/hOUYjZU71eHp/Wo1KZ40fGy2VJEDl34XMJM+TX48Ss/17u3IvIfbVR1FkZZSNCisQbuQY+bHwhEBg==\n";
   const signature = Buffer.from(signatureText, "utf8").toString("base64");
   const root = await mkdtemp(path.join(os.tmpdir(), "msh-developer-inspection-"));
   await mkdir(path.join(root, "src-tauri"), { recursive: true });
+  await mkdir(path.join(root, "src", "lib"), { recursive: true });
   await mkdir(path.join(root, "website"), { recursive: true });
   await mkdir(path.join(root, "developer-tools", "src-tauri", "capabilities"), { recursive: true });
   await mkdir(path.join(root, "artifacts", "updates", "1.2.3"), { recursive: true });
   await mkdir(path.join(root, "artifacts", "updates", "1.2.2"), { recursive: true });
-  const npmManifest = { version: "1.2.3", dependencies: { "safe-package": "1.0.0" } };
+  const npmManifest = { name: "minecraft-server-hub", version: "1.2.3", dependencies: { "safe-package": "1.0.0" } };
   const npmLock = { version: "1.2.3", packages: { "": npmManifest, "node_modules/safe-package": { version: "1.0.0", license: "MIT", resolved: "https://registry.npmjs.org/safe-package/-/safe-package-1.0.0.tgz", integrity: "sha512-fixture" } } };
   await writeFile(path.join(root, "package.json"), JSON.stringify(npmManifest));
   await writeFile(path.join(root, "package-lock.json"), JSON.stringify(npmLock));
@@ -45,7 +46,17 @@ async function fixture() {
     },
   }));
   await writeFile(path.join(root, "src-tauri", "updater-public.key"), publicKey);
-  await writeFile(path.join(root, "src-tauri", "tauri.conf.json"), JSON.stringify({ version: "1.2.3", plugins: { updater: { pubkey: publicKey } } }));
+  if (workspaceFlavor === "tomonode") {
+    await writeFile(path.join(root, "src", "lib", "brand.ts"), 'export const brand = { productName: "TomoNode" } as const;\n');
+  }
+  await writeFile(path.join(root, "index.html"), `<title>${workspaceFlavor === "tomonode" ? "TomoNode" : "Minecraft Server Hub"}</title>\n`);
+  await writeFile(path.join(root, "src-tauri", "tauri.conf.json"), JSON.stringify({
+    productName: "Minecraft Server Hub",
+    version: "1.2.3",
+    identifier: "local.minecraft-server-hub.desktop",
+    app: { windows: [{ title: workspaceFlavor === "tomonode" ? "TomoNode" : "Minecraft Server Hub" }] },
+    plugins: { updater: { pubkey: publicKey } },
+  }));
   const installer = "Fixture_1.2.3_x64-setup.exe";
   await writeFile(path.join(root, "artifacts", "updates", "1.2.3", installer), "test");
   await writeFile(path.join(root, "artifacts", "updates", "1.2.3", `${installer}.sig`), signature);
@@ -119,6 +130,39 @@ test("reports a consistent local signed release without mutating the workspace",
     assert.deepEqual(report.releaseHistory.map((entry) => entry.version), ["1.2.3", "1.2.2"]);
     assert.equal(report.summary.fail, 0);
   } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test("inspects legacy and TomoNode workspaces without using the root directory name", async () => {
+  for (const workspaceFlavor of ["legacy", "tomonode"]) {
+    const root = await fixture({ workspaceFlavor });
+    try {
+      const report = await inspectDeveloperWorkspace(root, { checkRemoteFeed: false });
+      assert.equal(report.readOnly, true);
+      assert.equal(report.expectedVersion, "1.2.3");
+      assert.equal(report.checks.find((check) => check.id === "versionConsistency")?.status, "pass");
+      assert.equal(report.checks.find((check) => check.id === "developerCapabilityPolicy")?.status, "pass");
+      assert.equal(report.capabilitySecurity.status, "verified");
+      const brandPath = path.join(root, "src", "lib", "brand.ts");
+      if (workspaceFlavor === "tomonode") {
+        const brandSource = await readFile(brandPath, "utf8");
+        assert.match(brandSource, /TomoNode/);
+      } else {
+        await assert.rejects(access(brandPath), { code: "ENOENT" });
+      }
+    } finally { await rm(root, { recursive: true, force: true }); }
+  }
+});
+
+test("keeps the consumer and Developer Tools update feeds separate", async () => {
+  const consumerFeed = "https://github.com/taori2731/minecraft-server-hub-releases/releases/latest/download/latest.json";
+  const developerFeed = "https://raw.githubusercontent.com/taori2731/minecraft-server-hub-releases/main/developer-tools/latest.json";
+  const generalSource = await readFile(path.join(process.cwd(), "scripts", "developer-inspection.mjs"), "utf8");
+  const developerSource = await readFile(path.join(process.cwd(), "developer-tools", "src-tauri", "src", "developer_update.rs"), "utf8");
+  assert.ok(generalSource.includes(consumerFeed));
+  assert.ok(developerSource.includes(developerFeed));
+  assert.notEqual(consumerFeed, developerFeed);
+  assert.ok(!generalSource.includes(developerFeed));
+  assert.ok(!developerSource.includes(consumerFeed));
 });
 
 test("detects the local Windows x64 build toolchain without opening consoles", async () => {

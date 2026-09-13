@@ -3,6 +3,7 @@ import { beforeAll, describe, expect, it, vi } from "vitest";
 import { getLocalePack, loadLocalePack, locales } from "./locale";
 import { OperationsNavigator } from "./OperationsNavigator";
 import { operationsNavigatorText } from "./operationsNavigatorLocale";
+import { developerBrand } from "./brand";
 
 beforeAll(async () => { await Promise.all(locales.map(loadLocalePack)); });
 
@@ -11,10 +12,10 @@ describe("OperationsNavigator", () => {
     const onNavigate = vi.fn();
     render(<OperationsNavigator locale="en" activeId="developer-overview" onNavigate={onNavigate} />);
 
-    expect(screen.getByRole("navigation", { name: "Developer tools sections" })).toBeInTheDocument();
+    expect(screen.getByRole("navigation", { name: `${developerBrand.productName} sections` })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Readiness" })).toHaveAttribute("aria-current", "location");
     expect(screen.getAllByRole("button")).toHaveLength(11);
-    expect(screen.getByRole("button", { name: "Developer Tools update" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "TomoNode Developer Tools update" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Permission security" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Build environment" })).toBeInTheDocument();
 

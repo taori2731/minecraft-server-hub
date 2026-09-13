@@ -1,4 +1,4 @@
-# Minecraft Server Hub design system
+# TomoNode design system
 
 The two user-supplied mockups are the accepted visual specification. The dark mockup is the primary composition and the light mockup is the same component system under light tokens.
 
