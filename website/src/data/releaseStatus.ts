@@ -1,9 +1,9 @@
 export type DeliveryStatus = "implemented" | "conditional" | "developing";
 
 export const releaseStatus = {
-  version: "公開予定 0.4.4",
+  version: "公開版 0.4.4",
   updatedAt: "2026-09-14",
-  download: "公開前（候補資産）",
+  download: "公開済み",
   releaseUrl: "https://github.com/taori2731/minecraft-server-hub-releases/releases/tag/v0.4.4",
   installerUrl: "https://github.com/taori2731/minecraft-server-hub-releases/releases/download/v0.4.4/Minecraft.Server.Hub_0.4.4_x64-setup.exe",
   signatureUrl: "https://github.com/taori2731/minecraft-server-hub-releases/releases/download/v0.4.4/Minecraft.Server.Hub_0.4.4_x64-setup.exe.sig",
@@ -11,8 +11,10 @@ export const releaseStatus = {
   checksumUrl: "https://github.com/taori2731/minecraft-server-hub-releases/releases/download/v0.4.4/SHA256SUMS.txt",
   installerName: "Minecraft.Server.Hub_0.4.4_x64-setup.exe",
   sha256: "DAB420310270952869E5965B60B57E9D48C2462CFF25E30A2041AD1BB9D93EEB",
-  signatureMethod: "Tauri Updater detached signature (.sig)（公開前候補）",
-  authenticodeStatus: "Windows Authenticodeは未確認",
+  latestFeedVersion: "0.4.4",
+  publicationVerification: "公開再取得検証PASS",
+  signatureMethod: "Tauri Updater detached signature (.sig)（公開検証済み）",
+  authenticodeStatus: "Windows Authenticodeは未署名（NotSigned）",
   groups: [
     { status: "implemented" as DeliveryStatus, label: "実装済み", items: [
       ["Minecraft Java", "Vanilla、Paper、Fabric、Forge、NeoForgeの作成経路、既存フォルダー検査、Java選択、ログ、設定、バックアップ"],
@@ -30,7 +32,7 @@ export const releaseStatus = {
       ["Bedrock / Palworld", "Windows向け実装と自動テストはありますが、一般PC・実クライアント参加を含む受入範囲は拡大中"],
       ["TPS", "Paperと対応Vanillaで取得。Fabric、Forge、NeoForgeでは未取得の場合あり"],
       ["別の家から参加", "UPnPまたは公式playit中継を選べます。ルーター、外部サービス、規約、ISP、ファイアウォール、回線状態に依存"],
-      ["アプリ内更新", "0.4.4候補の更新フィード、隣接.sig、SHA-256を準備。0.4.3からの最終更新確認は未実施/継続中"],
+      ["アプリ内更新", "公開版0.4.4のlatest.json、隣接.sig、SHA-256を公開再取得検証済み。0.4.3からの実アプリ更新・再起動確認は未実施/継続中"],
     ]},
     { status: "developing" as DeliveryStatus, label: "開発中・未接続", items: [
       ["任意支援・将来機能", "支援受付は準備中。将来の新機能の先行体験、開発中機能へのフィードバック参加、限定外観は候補です。支援先、金額、決済、ライセンス条件は未決定"],

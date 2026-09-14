@@ -6,23 +6,27 @@ import { releaseStatus } from "./data/releaseStatus";
 afterEach(cleanup);
 
 describe("最新の紹介サイト", () => {
-  it("TomoNodeの0.4.4候補状態と非公式表記を表示する", () => {
+  it("TomoNodeの公開版0.4.4状態と非公式表記を表示する", () => {
     render(<App />);
     expect(screen.getByRole("heading", { level: 1, name: /自分のWindows PCを.*ゲームサーバーに/ })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "TomoNode トップへ" })).toBeInTheDocument();
     expect(screen.getByText(/Minecraft Java／BedrockとPalworld/)).toBeInTheDocument();
-    const downloadLinks = screen.getAllByRole("link", { name: "0.4.4候補を確認" });
+    const downloadLinks = screen.getAllByRole("link", { name: "0.4.4をダウンロード" });
     expect(downloadLinks).toHaveLength(3);
     expect(downloadLinks.filter((link) => link.getAttribute("href") === releaseStatus.installerUrl)).toHaveLength(2);
     expect(screen.getByRole("link", { name: /^GitHub Release/ })).toHaveAttribute("href", releaseStatus.releaseUrl);
     expect(screen.getByRole("link", { name: /^latest\.json/ })).toHaveAttribute("href", releaseStatus.manifestUrl);
     expect(screen.getByRole("link", { name: /^隣接\.sig/ })).toHaveAttribute("href", releaseStatus.signatureUrl);
     expect(screen.getByRole("link", { name: /^SHA256SUMS\.txt/ })).toHaveAttribute("href", releaseStatus.checksumUrl);
-    expect(releaseStatus.version).toBe("公開予定 0.4.4");
-    expect(releaseStatus.download).toBe("公開前（候補資産）");
+    expect(releaseStatus.version).toBe("公開版 0.4.4");
+    expect(releaseStatus.download).toBe("公開済み");
+    expect(releaseStatus.latestFeedVersion).toBe("0.4.4");
+    expect(releaseStatus.publicationVerification).toBe("公開再取得検証PASS");
     expect(releaseStatus.releaseUrl).toBe("https://github.com/taori2731/minecraft-server-hub-releases/releases/tag/v0.4.4");
     expect(releaseStatus.installerUrl).toBe("https://github.com/taori2731/minecraft-server-hub-releases/releases/download/v0.4.4/Minecraft.Server.Hub_0.4.4_x64-setup.exe");
     expect(releaseStatus.sha256).toBe("DAB420310270952869E5965B60B57E9D48C2462CFF25E30A2041AD1BB9D93EEB");
+    expect(releaseStatus.signatureMethod).toMatch(/公開検証済み/);
+    expect(releaseStatus.authenticodeStatus).toBe("Windows Authenticodeは未署名（NotSigned）");
     expect(screen.getAllByText(/公式製品・提携製品ではありません/).length).toBeGreaterThan(0);
     expect(screen.getAllByText(/Minecraft、Mojang Studios、Microsoft、Palworld、Pocketpair、Valve/).length).toBeGreaterThan(0);
     expect(screen.queryByText(/0\.3\.2|一般公開準備中|仮称/)).not.toBeInTheDocument();
@@ -80,17 +84,19 @@ describe("最新の紹介サイト", () => {
     expect(screen.queryByText("広告非表示")).not.toBeInTheDocument();
   });
 
-  it("署名付き更新と9言語対応を掲載し、候補と一般配布を区別する", () => {
+  it("署名付き更新と9言語対応を掲載し、公開検証と実更新確認を区別する", () => {
     render(<App />);
     expect(screen.getByRole("heading", { name: "更新も、内容を確認してから" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "9言語UI" })).toBeInTheDocument();
     expect(screen.getByText(/署名を検証できない場合は、現在のサーバーまたはアプリを維持/)).toBeInTheDocument();
-    expect(screen.getAllByText(/0\.4\.3からの最終更新確認は未実施\/継続中/).length).toBeGreaterThan(0);
-    expect(screen.getByText(/公開前に記録した候補資産のSHA-256/)).toBeInTheDocument();
-    expect(screen.getByText(/GitHub Releaseへの公開と一般配布はまだ実施していません/)).toBeInTheDocument();
+    expect(screen.getAllByText(/0\.4\.3からの実アプリ更新・再起動確認は未実施\/継続中/).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/公開再取得検証PASS/).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/Windows Authenticodeは未署名（NotSigned）/).length).toBeGreaterThan(0);
     expect(screen.getByText(/SmartScreenが警告を表示する可能性/)).toBeInTheDocument();
     expect(screen.getByText("Minecraft.Server.Hub_0.4.4_x64-setup.exe")).toBeInTheDocument();
     expect(screen.getByText("DAB420310270952869E5965B60B57E9D48C2462CFF25E30A2041AD1BB9D93EEB")).toBeInTheDocument();
+    const bodyText = document.body.textContent ?? "";
+    for (const oldReleaseText of ["公開予定 0.4.4", "公開前（候補資産）", "0.4.4候補を確認", "GitHub公開前です", "公開前に記録した候補資産"]) expect(bodyText).not.toContain(oldReleaseText);
   });
 
   it("テーマ切り替えを端末内に保存する", () => {

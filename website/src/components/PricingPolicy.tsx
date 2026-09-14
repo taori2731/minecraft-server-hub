@@ -30,7 +30,7 @@ export function PricingPolicy() {
       <section className="section support-section" id="pricing" aria-labelledby="pricing-title">
         <SectionHeading id="pricing-title" title="基本・安全・高度な運用は全員無料" description="安定機能と安全機能に、支援の有無による利用制限は設けません。TomoNodeへの支援は任意です。" align="center" />
         <div className="support-grid">
-          <article className="plan plan-all"><div className="plan-heading"><div><span>全員に提供</span><h3>基本・安全・高度な運用</h3></div><StatusTag status="available">全員利用可</StatusTag></div><ul>{allFeatures.map((item) => <li key={item}><Check aria-hidden="true" />{item}</li>)}</ul><a className="button button-primary" href="#download">機能と候補資産を確認</a></article>
+          <article className="plan plan-all"><div className="plan-heading"><div><span>全員に提供</span><h3>基本・安全・高度な運用</h3></div><StatusTag status="available">全員利用可</StatusTag></div><ul>{allFeatures.map((item) => <li key={item}><Check aria-hidden="true" />{item}</li>)}</ul><a className="button button-primary" href="#download">公開版の機能と資産を確認</a></article>
           <article className="plan plan-support"><div className="plan-heading"><div><span>任意支援</span><h3>TomoNodeを応援</h3></div><StatusTag status="preparing">支援受付は準備中</StatusTag></div><ul>{supporterCandidates.map((item) => <li key={item}><HeartHandshake aria-hidden="true" />{item}</li>)}</ul><p className="support-intake">支援受付は準備中</p><p className="support-details">支援先、金額、決済方法、ライセンス条件は未決定です。候補は将来の検討内容であり、現在の提供機能を表しません。</p></article>
         </div>
         <figure className="support-preview"><img src="/screenshots/operations-center-dark.png" alt="MinecraftとPalworldの複数サーバーを一覧し、一括操作や安全停止を行う開発版画面" /><figcaption>高度な運用の画面も、支援の有無にかかわらず全員が利用できます。</figcaption></figure>

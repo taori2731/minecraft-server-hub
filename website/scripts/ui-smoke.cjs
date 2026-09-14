@@ -36,7 +36,7 @@ async function waitForServer() {
     desktop.getByRole("heading", { name: "Minecraft Java", exact: true }).waitFor(),
     desktop.getByRole("heading", { name: "Palworld", exact: true }).waitFor(),
     desktop.getByRole("heading", { name: "Windowsパッケージ表示", exact: true }).waitFor(),
-    desktop.getByRole("link", { name: "0.4.4候補を確認" }).first().waitFor(),
+    desktop.getByRole("link", { name: "0.4.4をダウンロード" }).first().waitFor(),
   ]);
   const supportHeading = desktop.getByRole("heading", { name: "TomoNodeを応援" });
   await supportHeading.scrollIntoViewIfNeeded(); await supportHeading.waitFor({ state: "visible" });
@@ -46,7 +46,13 @@ async function waitForServer() {
     if (pageText.includes(oldText)) throw new Error(`旧支援表示が残っています: ${oldText}`);
   }
   if (!pageText.includes("基本・安全・高度な運用は全員無料")) throw new Error("全員無料の運用方針が表示されません");
-  if (!pageText.includes("0.4.3からの最終更新確認は未実施/継続中")) throw new Error("0.4.3からの更新確認状態が表示されません");
+  for (const oldReleaseText of ["公開予定 0.4.4", "公開前（候補資産）", "0.4.4候補を確認", "GitHub公開前です"]) {
+    if (pageText.includes(oldReleaseText)) throw new Error(`旧公開状態が残っています: ${oldReleaseText}`);
+  }
+  if (!pageText.includes("公開版 0.4.4")) throw new Error("公開版0.4.4が表示されません");
+  if (!pageText.includes("公開再取得検証PASS")) throw new Error("公開再取得検証PASSが表示されません");
+  if (!pageText.includes("Windows Authenticodeは未署名（NotSigned）")) throw new Error("Authenticode未署名状態が表示されません");
+  if (!pageText.includes("0.4.3からの実アプリ更新・再起動確認は未実施/継続中")) throw new Error("実アプリ更新確認状態が表示されません");
   fs.mkdirSync(outputDir, { recursive: true });
   const initialTheme = await desktop.locator("html").getAttribute("data-theme");
   await desktop.screenshot({ path: path.join(outputDir, `site-updates-${initialTheme}.png`), fullPage: false });
@@ -58,5 +64,5 @@ async function waitForServer() {
   await mobile.goto(url, { waitUntil: "networkidle" }); await mobile.getByRole("button", { name: "メニューを開く" }).click(); await mobile.getByRole("navigation", { name: "モバイルナビゲーション" }).getByRole("link", { name: "現在の状態" }).waitFor(); await mobile.waitForTimeout(250);
   await mobile.screenshot({ path: path.join(outputDir, "site-mobile-menu.png"), fullPage: false });
   if (errors.length) throw new Error(`紹介サイトのブラウザエラー: ${errors.join(" | ")}`);
-  console.log("Website UI smoke PASS: desktop dark/light, update status, support policy, mobile navigation");
+  console.log("Website UI smoke PASS: desktop dark/light, published 0.4.4 status, support policy, mobile navigation");
 })().catch((error) => { console.error(error); process.exitCode = 1; }).finally(async () => { if (browser) await browser.close().catch(() => undefined); if (server) server.kill(); });
