@@ -8,29 +8,9 @@ import { AppUpdatePanel } from "./AppUpdatePanel";
 import { appUpdateText } from "../lib/appUpdateLocale";
 import { brand } from "../lib/brand";
 import { getRebrandCopy } from "../lib/rebrandLocale";
+import { supporterText } from "../lib/supporterLocale";
 
 type Section = "language" | "members" | "pro" | "plan" | "privacy" | "update" | "uninstall";
-
-const FREE_PLAN_FEATURES = [
-  "サーバーの作成・取り込み・起動・停止・削除",
-  "Javaの自動準備とPC診断",
-  "基本診断・ログ確認",
-  "手動バックアップ・復元と変更前の安全バックアップ",
-  "ワールド再生成と基本的な軽量化",
-  "Modrinthからの拡張導入",
-  "playit.ggを使った基本的な友達招待",
-  "プレイヤー管理とダーク・ライトテーマ",
-] as const;
-
-const PRO_PLAN_FEATURES = [
-  "予約・複数世代バックアップ（基盤実装済み・予約UI開発中）",
-  "複数サーバーの一括操作（開発版を利用可能）",
-  "長期操作履歴（開発版を利用可能）",
-  "高度な監視と通知（アプリ内通知を利用可能）",
-  "Modパック構成の保存・共有（利用可能）",
-  "追加テーマ・アイコン（利用可能）",
-  "優先サポート（提供体制の準備後）",
-] as const;
 
 export function AppSettingsDialog({
   server,
@@ -55,6 +35,7 @@ export function AppSettingsDialog({
 }) {
   const { preference, locale, setPreference, t } = useI18n();
   const rebrand = getRebrandCopy(locale);
+  const supporter = supporterText(locale);
   const [section, setSection] = useState<Section>("members");
   const [members, setMembers] = useState<FixedPlayerPreset[]>([]);
   const [edition, setEdition] = useState<"java" | "bedrock">("java");
@@ -188,8 +169,8 @@ export function AppSettingsDialog({
       <div className="fixed-member-target"><div><strong>{server ? `適用先: ${server.name}` : "適用先のサーバーがありません"}</strong><small>{server ? (canApply ? (status?.state === "running" ? "起動中のため即時反映します" : "停止中の設定ファイルへ保存します") : "起動・停止処理の完了後に適用できます") : "先にサーバーを作成または取り込んでください"}</small></div><button className="primary-button" type="button" disabled={busy !== "" || members.length === 0 || !canApply} onClick={() => applyMembers(members)}><Icon name="users" size={17} />対応メンバーを反映</button></div>
       <div className="fixed-member-list">{members.map((member) => <article key={member.id}><span className={`access-avatar whitelist ${member.edition}`}><Icon name="users" size={19} /></span><div><strong>{member.playerName}</strong><span className="fixed-member-badges"><small>{member.edition === "bedrock" ? "統合版専用" : "Java版"}</small>{member.whitelist ? <small>{member.edition === "bedrock" ? "統合版ホワイトリスト" : "ホワイトリスト"}</small> : null}{member.operator ? <small className="operator">権限者</small> : null}</span></div><div className="fixed-member-actions"><button className="small-button" type="button" disabled={busy !== ""} onClick={() => editMember(member)}>編集</button><button className="small-button" type="button" disabled={busy !== "" || !canApply} onClick={() => applyMembers([member])}>この人を反映</button><button className="icon-button danger-icon" type="button" disabled={busy !== ""} onClick={() => deleteMember(member)} aria-label={`${member.playerName}を削除`}><Icon name="trash" size={17} /></button></div></article>)}{members.length === 0 ? <div className="panel-empty compact"><p>保存されたメンバーはいません。種類と名前を選んで追加してください。</p></div> : null}</div>
       <p className="privacy-note"><Icon name="info" size={16} />統合版専用メンバーは、PaperではFloodgateの統合版ホワイトリスト、BDSでは許可リストへ反映します。Java版メンバーとは同名でも別に保存できます。</p></> : null}
-    {section === "pro" ? <><span className="section-kicker">PRO OPERATIONS</span><h3>複数サーバー運用</h3><p>複数サーバーの状態、操作、監視、履歴、Mod構成、外観を一か所で管理します。開発版のため決済やライセンス認証はまだ接続していません。</p><ProOperationsPanel servers={servers} statuses={statuses} selectedServerId={server?.id} onStatusesChanged={onStatusesChanged} onAppearanceChanged={onAppearanceChanged} notify={notify} fail={fail} /></> : null}
-    {section === "plan" ? <><span className="section-kicker">PLAN</span><h3>無料版とPro／サポーター版</h3><p>基本機能と安全機能は無料のまま利用できます。Pro版は、運用を便利にする自動化や高度な管理機能を追加する開発支援版として検討中です。</p><div className="plan-grid"><article className="current"><span>利用可能</span><h4>無料版</h4><strong>¥0</strong><ul>{FREE_PLAN_FEATURES.map((feature) => <li key={feature}>{feature}</li>)}</ul></article><article><span>開発中・予定</span><h4>Pro／サポーター版</h4><strong>価格未定</strong><ul>{PRO_PLAN_FEATURES.map((feature) => <li key={feature}>{feature}</li>)}</ul><button className="primary-button" type="button" disabled>準備中（購入できません）</button></article></div><div className="plan-policy"><strong>料金方針</strong><p>継続的なクラウド提供を含まないローカル機能は、買い切り方式を候補として検討しています。決済、ライセンス認証、価格、税、返金条件はまだ未設定です。</p><p>復元、診断、Java準備、変更前バックアップ、基本招待など、安全に使うための機能を有料限定にはしません。</p></div></> : null}
+    {section === "pro" ? <><span className="section-kicker">ADVANCED OPERATIONS</span><h3>{supporter.advancedOperationsTitle}</h3><p>{supporter.advancedOperationsBody}</p><ProOperationsPanel servers={servers} statuses={statuses} selectedServerId={server?.id} onStatusesChanged={onStatusesChanged} onAppearanceChanged={onAppearanceChanged} notify={notify} fail={fail} /></> : null}
+    {section === "plan" ? <><span className="section-kicker">SUPPORT</span><h3>{supporter.title}</h3><p>{supporter.intro}</p><div className="plan-grid"><article className="current"><span>{supporter.freeKicker}</span><h4>{supporter.freeTitle}</h4><ul>{supporter.freeFeatures.map((feature) => <li key={feature}>{feature}</li>)}</ul></article><article><span>{supporter.candidateKicker}</span><h4>{supporter.candidateTitle}</h4><ul>{supporter.candidateFeatures.map((feature) => <li key={feature}>{feature}</li>)}</ul></article></div><div className="plan-policy"><strong>{supporter.pendingTitle}</strong><p>{supporter.pendingBody}</p><p>{supporter.afterStoppingBody}</p></div></> : null}
     {section === "privacy" ? <><span className="section-kicker">LOCAL FIRST</span><h3>プライバシーとライセンス</h3><div className="privacy-list"><article><strong>{brand.productName}</strong><p>{locale === "ja" ? brand.descriptorJa : brand.descriptorEn}</p><small>{locale === "ja" ? brand.taglineJa : brand.tagline}</small></article><article><strong>診断データ</strong><p>CPU、メモリ、GPU、Java、保存先の情報はローカルで処理し、自動送信しません。</p></article><article><strong>広告・決済</strong><p>本番広告、決済、ライセンス認証は未接続です。ログ、ワールド名、プレイヤー名、IPアドレスを広告目的で送信しません。</p></article><article><strong>オープンソース</strong><p>配布前に依存ライセンス一覧と第三者表示を同梱します。</p></article><article><strong>{rebrand.nonAffiliationTitle}</strong><p>{rebrand.nonAffiliationBody}</p></article></div></> : null}
     {section === "update" ? <AppUpdatePanel hasActiveServers={Object.values(statuses).some((value) => value.state !== "stopped" && value.state !== "crashed")} notify={notify} fail={fail} /> : null}
     {section === "uninstall" ? <><span className="section-kicker">WINDOWS APP</span><h3>アプリをアンインストール</h3><p>{rebrand.uninstallDescription}</p><div className="uninstall-card"><Icon name="trash" size={28} /><div><strong>{rebrand.uninstallPanelTitle}</strong><small>{rebrand.uninstallDetail}</small></div><button className="danger-button" type="button" disabled={busy !== ""} onClick={async () => { if (!await confirmDanger(rebrand.uninstallConfirm)) return; setBusy("uninstall"); try { await backend.openUninstallSettings(); notify(rebrand.uninstallSuccess); } catch (reason) { fail(String(reason)); } finally { setBusy(""); } }}><Icon name="trash" size={17} />{rebrand.uninstallButton}</button></div><p className="privacy-note"><Icon name="info" size={16} />{rebrand.uninstallNote}</p></> : null}

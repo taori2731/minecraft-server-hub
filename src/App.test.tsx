@@ -296,26 +296,32 @@ describe(brand.productName, () => {
     expect(screen.getByRole("heading", { name: "確認付きサーバー更新" })).toBeInTheDocument();
   });
 
-  it("keeps safety features free and labels implemented Pro development features honestly", async () => {
+  it("keeps stable and safety features free and describes optional support honestly", async () => {
     const { container } = render(<App />);
     await screen.findByRole("heading", { name: "Survival World" });
     fireEvent.click(container.querySelector<HTMLButtonElement>(".sidebar-footer button")!);
-    fireEvent.click(await screen.findByRole("button", { name: "プラン" }, { timeout: 5_000 }));
-    expect(await screen.findByRole("heading", { name: "無料版とPro／サポーター版" })).toBeInTheDocument();
-    expect(screen.getByText("手動バックアップ・復元と変更前の安全バックアップ")).toBeInTheDocument();
-    expect(screen.getByText("予約・複数世代バックアップ（基盤実装済み・予約UI開発中）")).toBeInTheDocument();
-    expect(screen.getByText("複数サーバーの一括操作（開発版を利用可能）")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "準備中（購入できません）" })).toBeDisabled();
+    fireEvent.click(await screen.findByRole("button", { name: "TomoNodeを応援" }, { timeout: 5_000 }));
+    expect(await screen.findByRole("heading", { name: "TomoNodeを応援" })).toBeInTheDocument();
+    expect(screen.getByText("支援は任意です。安定して提供している機能と安全機能は、これからも全員が無料で利用できます。")).toBeInTheDocument();
+    expect(screen.getByText("バックアップ・復元と変更前の安全バックアップ")).toBeInTheDocument();
+    expect(screen.getByText("将来追加する新機能の先行体験")).toBeInTheDocument();
+    expect(screen.getByText("開発中の機能へのフィードバック参加")).toBeInTheDocument();
+    expect(screen.getByText("限定デザインやアイコンなどの外観")).toBeInTheDocument();
+    expect(screen.getByText("支援を停止した後も、安全機能、バックアップと復元、サーバーデータへのアクセスを制限しません。")).toBeInTheDocument();
+    expect(screen.queryByText("無料版とPro／サポーター版")).not.toBeInTheDocument();
+    expect(screen.queryByText("価格未定")).not.toBeInTheDocument();
+    expect(screen.queryByText("準備中（購入できません）")).not.toBeInTheDocument();
+    expect(screen.queryByText("料金方針")).not.toBeInTheDocument();
     expect(screen.queryByText("広告非表示")).not.toBeInTheDocument();
   });
 
-  it("operates multiple servers and saves Pro appearance settings", async () => {
+  it("operates multiple servers and saves advanced-operation appearance settings", async () => {
     vi.spyOn(window, "confirm").mockReturnValue(true);
     const { container } = render(<App />);
     await screen.findByRole("heading", { name: "Survival World" });
     fireEvent.click(container.querySelector<HTMLButtonElement>(".sidebar-footer button")!);
-    fireEvent.click(await screen.findByRole("button", { name: "Pro運用" }));
-    expect(await screen.findByRole("heading", { name: "複数サーバー運用" })).toBeInTheDocument();
+    fireEvent.click(await screen.findByRole("button", { name: "高度な運用" }));
+    expect(await screen.findByRole("heading", { name: "高度な運用" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "複数サーバーの一括操作" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "高度な監視とアプリ内通知" })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "すべて選択" }));

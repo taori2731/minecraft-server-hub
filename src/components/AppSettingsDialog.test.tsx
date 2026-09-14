@@ -35,9 +35,17 @@ describe("アプリ設定", () => {
     expect(screen.getByRole("heading", { name: "言語と地域" })).toBeInTheDocument();
     expect(screen.getByLabelText("表示言語")).toHaveValue("ja");
 
-    fireEvent.click(screen.getByRole("button", { name: "プラン" }));
-    expect(screen.getByText("無料版とPro／サポーター版")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "準備中（購入できません）" })).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "TomoNodeを応援" }));
+    expect(screen.getByRole("heading", { name: "TomoNodeを応援" })).toBeInTheDocument();
+    expect(screen.getByText("支援は任意です。安定して提供している機能と安全機能は、これからも全員が無料で利用できます。")).toBeInTheDocument();
+    expect(screen.getByText("支援受付は準備中")).toBeInTheDocument();
+    expect(screen.getByText("将来追加する新機能の先行体験")).toBeInTheDocument();
+    expect(screen.getByText("開発中の機能へのフィードバック参加")).toBeInTheDocument();
+    expect(screen.getByText("限定デザインやアイコンなどの外観")).toBeInTheDocument();
+    expect(screen.queryByText("無料版とPro／サポーター版")).not.toBeInTheDocument();
+    expect(screen.queryByText("価格未定")).not.toBeInTheDocument();
+    expect(screen.queryByText("準備中（購入できません）")).not.toBeInTheDocument();
+    expect(screen.queryByText("料金方針")).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "プライバシー" }));
     expect(screen.getByText("プライバシーとライセンス")).toBeInTheDocument();

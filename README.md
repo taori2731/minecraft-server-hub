@@ -50,13 +50,13 @@ Rustバックエンドは `cd src-tauri; cargo test`、紹介サイトは `cd we
 
 ## 公開版と安全な実行
 
-現在公開されている版は0.4.1です。TomoNode名称変更版は準備中です。0.4.1のWindowsパッケージ名とアプリ表示は旧名称の場合があります。
+現在公開されている版は0.4.3です。0.4.4は公開予定の候補としてソースとWebsiteを準備中ですが、GitHub Releaseへの公開と一般配布はまだ実施していません。0.4.3のWindowsパッケージ名とアプリ表示は旧名称の場合があります。
 
-- [GitHub Release v0.4.1](https://github.com/taori2731/minecraft-server-hub-releases/releases/tag/v0.4.1)
-- インストーラー: [Minecraft.Server.Hub_0.4.1_x64-setup.exe](https://github.com/taori2731/minecraft-server-hub-releases/releases/download/v0.4.1/Minecraft.Server.Hub_0.4.1_x64-setup.exe)
-- SHA-256: `D05359C3986B8DDA40508D6A5CD2BB4A328DBDE828661BED58E6B105134214AA`（公開[SHA256SUMS.txt](https://github.com/taori2731/minecraft-server-hub-releases/releases/download/v0.4.1/SHA256SUMS.txt)と照合）
-- 更新マニフェスト: [latest.json](https://github.com/taori2731/minecraft-server-hub-releases/releases/download/v0.4.1/latest.json)
-- Tauri Updater署名資産: [隣接.sig](https://github.com/taori2731/minecraft-server-hub-releases/releases/download/v0.4.1/Minecraft.Server.Hub_0.4.1_x64-setup.exe.sig)。`latest.json`の`signature`欄はこの`.sig`の内容と一致します。これはWindows Authenticode署名を意味しません。
+- [GitHub Release v0.4.3](https://github.com/taori2731/minecraft-server-hub-releases/releases/tag/v0.4.3)
+- インストーラー: [Minecraft.Server.Hub_0.4.3_x64-setup.exe](https://github.com/taori2731/minecraft-server-hub-releases/releases/download/v0.4.3/Minecraft.Server.Hub_0.4.3_x64-setup.exe)
+- SHA-256: `8EB385DA53430667636787EF3930B3AA9298D4F7625AF7E4378550E32E597C0E`（公開[SHA256SUMS.txt](https://github.com/taori2731/minecraft-server-hub-releases/releases/download/v0.4.3/SHA256SUMS.txt)と照合）
+- 更新マニフェスト: [latest.json](https://github.com/taori2731/minecraft-server-hub-releases/releases/download/v0.4.3/latest.json)
+- Tauri Updater署名資産: [隣接.sig](https://github.com/taori2731/minecraft-server-hub-releases/releases/download/v0.4.3/Minecraft.Server.Hub_0.4.3_x64-setup.exe.sig)。`latest.json`の`signature`欄はこの`.sig`の内容と一致します。これはWindows Authenticode署名を意味しません。
 - Windows Authenticode署名は確認済みではありません。SmartScreenが警告を表示する可能性があるため、実行前に公式ReleaseのURL、Windowsの発行元表示、ファイル名、SHA-256を確認し、不一致や不明点があれば実行しないでください。
 - アンインストールだけで外部サーバーフォルダーやワールドを削除しません。削除・移動の前にサーバー、ワールド、設定、バックアップを確認してください。
 

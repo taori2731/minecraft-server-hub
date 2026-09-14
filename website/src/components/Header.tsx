@@ -23,7 +23,7 @@ export function Header({ theme, onToggleTheme }: { theme: Theme; onToggleTheme: 
       </div>
       <nav className={`mobile-nav${menuOpen ? " is-open" : ""}`} id="mobile-navigation" aria-label="モバイルナビゲーション">
         {navItems.map(([label, href]) => <a key={href} href={href} onClick={() => setMenuOpen(false)}>{label}</a>)}
-        <a href="#download" onClick={() => setMenuOpen(false)}>0.4.3をダウンロード</a>
+        <a href="#download" onClick={() => setMenuOpen(false)}>0.4.4候補を確認</a>
       </nav>
     </header>
   );
